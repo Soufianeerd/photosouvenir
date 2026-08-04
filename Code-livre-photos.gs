@@ -1,225 +1,896 @@
 /**
  * ═══════════════════════════════════════════════════════
- *  LIVRE PHOTOS SOUVENIRS — Google Apps Script (FINAL)
- *  Soufiane & Salma · 23 Octobre 2026
+ * LIVRE PHOTOS SOUVENIRS — GOOGLE APPS SCRIPT
+ * Soufiane & Salma · 23 octobre 2026
  * ═══════════════════════════════════════════════════════
  *
- *  Cette version agit comme backend sécurisé et privé.
- *  Aucun jeton d'accès OAuth côté client n'est nécessaire.
- *  Les fichiers restent strictement privés sur votre Google Drive.
- *
- *  ── INSTALLATION ─────────────────────────────────────
- *  1. script.google.com → Nouveau projet
- *  2. Nommer : "Livre Photos - Mariage S&S"
- *  3. Coller ce code, remplir les constantes [EDIT]
- *  4. ▶ Exécuter → autoriser les permissions (Drive + Sheets)
- *  5. Déployer → Application Web
- *     - Exécuter en tant que : Moi
- *     - Accès : N'importe qui
- *  6. Copier l'URL /exec → coller dans le frontend
+ * Backend Google Apps Script :
+ * - enregistre les photos et vidéos dans Google Drive ;
+ * - conserve les fichiers privés ;
+ * - confirme les envois avec CacheService + PropertiesService ;
+ * - permet au frontend de vérifier le statut par JSONP.
  */
 
-const DRIVE_MAIN_FOLDER = "Livre Photos Souvenirs — Mariage S&S 📸";
-const SHEET_ID = ''; // [EDIT] URL Sheet : .../spreadsheets/d/ >>> ID <<< /edit (ou vide)
-const SHEET_TAB = 'Registre Souvenirs';
-const CACHE_EXPIRATION_SECONDS = 3600; // 1 heure
+
+/* ═══════════════════════════════════════════════════════
+   CONFIGURATION
+   ═══════════════════════════════════════════════════════ */
+
+const DRIVE_MAIN_FOLDER_ID = '12W1gstTtPzL4JFVq6MQWzvDa8FpbBy4b';
 
 /**
- * Traite les requêtes POST entrantes (Upload).
+ * Facultatif.
+ * Laisse vide si tu ne souhaites pas utiliser Google Sheets.
+ */
+const SHEET_ID = '';
+const SHEET_TAB = 'Registre Souvenirs';
+
+/**
+ * Le cache rapide conserve les statuts pendant une heure.
+ * PropertiesService les conserve jusqu’à six heures.
+ */
+const CACHE_EXPIRATION_SECONDS = 3600;
+const STATUS_RETENTION_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Limites appliquées côté Google Apps Script.
+ */
+const MAX_PHOTO_BYTES = 20 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
+const MAX_VIDEO_DURATION_SECONDS = 60;
+
+const ALLOWED_PHOTO_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp'
+];
+
+const ALLOWED_VIDEO_MIME_TYPES = [
+  'video/mp4',
+  'video/webm',
+  'video/quicktime'
+];
+
+const MIME_EXTENSIONS = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'video/mp4': '.mp4',
+  'video/webm': '.webm',
+  'video/quicktime': '.mov'
+};
+
+const STATUS_PREFIX = 'upload_';
+
+
+/* ═══════════════════════════════════════════════════════
+   RÉCEPTION D’UN MÉDIA
+   ═══════════════════════════════════════════════════════ */
+
+/**
+ * Cette fonction est appelée automatiquement par le site.
+ *
+ * Ne pas exécuter doPost manuellement avec le bouton
+ * « Exécuter » de Google Apps Script.
  */
 function doPost(e) {
   let uploadId = 'unknown';
-  
+
   try {
-    const data = JSON.parse(e.postData.contents);
-    uploadId = data.uploadId || Utilities.getUuid();
-    
-    // 1. Initialiser le statut à PROCESSING
-    setStatus_(uploadId, 'PROCESSING', { message: 'Fichier en cours de traitement par Google Apps Script' });
-
-    const mediaBase64 = data.mediaBase64;
-    const mimeType    = data.mimeType || 'application/octet-stream';
-    const mediaType   = data.mediaType || 'unknown'; // 'photo' ou 'video'
-    const filename    = sanitize_(data.filename || `${Date.now()}_fichier`);
-    const guestName   = data.guestName || 'Anonyme';
-    const message     = data.message || '';
-    const filterId    = data.filterId || 'none';
-    const orientation = data.orientation || 'unknown';
-    const duration    = data.duration || 0;
-    
-    // Validation basique
-    if (!mediaBase64) {
-      throw new Error("Payload incomplet : aucun média reçu.");
-    }
-    
-    // 2. Décoder le fichier Base64
-    const fileBytes = Utilities.base64Decode(mediaBase64);
-    const blob = Utilities.newBlob(fileBytes, mimeType, filename);
-    const size = fileBytes.length;
-
-    // 3. Obtenir les dossiers
-    const mainFolder = getOrCreateFolder_(DriveApp.getRootFolder(), DRIVE_MAIN_FOLDER);
-    const photosFolder = getOrCreateFolder_(mainFolder, 'Photos');
-    const videosFolder = getOrCreateFolder_(mainFolder, 'Vidéos');
-    const tempFolder = getOrCreateFolder_(mainFolder, 'Temporaires'); // Créé au cas où
-
-    const destinationFolder = mediaType === 'photo' ? photosFolder : (mediaType === 'video' ? videosFolder : tempFolder);
-
-    // 4. Sauvegarder dans Drive (Le fichier reste 100% PRIVÉ)
-    const file = destinationFolder.createFile(blob);
-    const fileId = file.getId();
-    
-    // /!\ AUCUN setSharing / ANYONE_WITH_LINK ici.
-    // Le fichier appartient au propriétaire du script.
-
-    // 5. Enregistrer dans Google Sheets
-    if (SHEET_ID && SHEET_ID.trim() !== '') {
-      logToSheet_(uploadId, guestName, message, mediaType, filename, mimeType, size, duration, orientation, filterId, fileId, destinationFolder.getName());
+    if (!e || !e.postData || !e.postData.contents) {
+      throw new Error('Requête POST invalide.');
     }
 
-    // 6. Succès ! Mettre à jour le statut
-    setStatus_(uploadId, 'COMPLETED', {
-      fileId: fileId,
-      filename: filename,
-      mediaType: mediaType
+    let data;
+
+    try {
+      data = JSON.parse(e.postData.contents);
+    } catch (parseError) {
+      throw new Error('Payload JSON invalide.');
+    }
+
+    uploadId = validateUploadId_(
+      data.uploadId || Utilities.getUuid()
+    );
+
+    setStatus_(uploadId, 'PROCESSING', {
+      message: 'Traitement du souvenir en cours.'
     });
 
-    return buildResponse_({ success: true, uploadId: uploadId });
+    const mediaType = String(data.mediaType || '').toLowerCase().trim();
 
-  } catch (err) {
-    Logger.log('❌ Erreur doPost : ' + err.toString());
-    setStatus_(uploadId, 'FAILED', { error: 'Erreur interne de traitement sécurisé.' });
-    return buildResponse_({ success: false, uploadId: uploadId, error: err.message });
+    const mimeType = normalizeMimeType_(
+      data.mimeType || 'application/octet-stream'
+    );
+
+    const mediaBase64 = normalizeBase64_(
+      data.mediaBase64 || ''
+    );
+
+    const duration = Number(data.duration || 0);
+
+    const guestName = safeText_(
+      data.guestName || 'Anonyme',
+      80
+    );
+
+    const message = safeText_(
+      data.message || '',
+      500
+    );
+
+    const filterId = safeText_(
+      data.filterId || 'none',
+      80
+    );
+
+    const orientation = safeText_(
+      data.orientation || 'unknown',
+      30
+    );
+
+    validateMediaMetadata_(
+      mediaType,
+      mimeType,
+      mediaBase64,
+      duration
+    );
+
+    const filename = normalizeFilename_(
+      data.filename || `${Date.now()}_souvenir`,
+      mimeType
+    );
+
+    const fileBytes = Utilities.base64Decode(mediaBase64);
+    const fileSize = fileBytes.length;
+
+    validateDecodedFile_(
+      mediaType,
+      mimeType,
+      fileSize,
+      duration
+    );
+
+    const blob = Utilities.newBlob(
+      fileBytes,
+      mimeType,
+      filename
+    );
+
+    const mainFolder = DriveApp.getFolderById(
+      DRIVE_MAIN_FOLDER_ID
+    );
+
+    const photosFolder = getOrCreateFolder_(
+      mainFolder,
+      'Photos'
+    );
+
+    const videosFolder = getOrCreateFolder_(
+      mainFolder,
+      'Vidéos'
+    );
+
+    getOrCreateFolder_(
+      mainFolder,
+      'Temporaires'
+    );
+
+    const destinationFolder =
+      mediaType === 'photo'
+        ? photosFolder
+        : videosFolder;
+
+    /**
+     * Le fichier est créé sans setSharing().
+     * Il reste donc privé dans le Drive du propriétaire.
+     */
+    const driveFile = destinationFolder.createFile(blob);
+
+    const fileId = driveFile.getId();
+
+    if (SHEET_ID && SHEET_ID.trim() !== '') {
+      logToSheet_(
+        uploadId,
+        guestName,
+        message,
+        mediaType,
+        filename,
+        mimeType,
+        fileSize,
+        duration,
+        orientation,
+        filterId,
+        fileId,
+        destinationFolder.getName()
+      );
+    }
+
+    setStatus_(uploadId, 'COMPLETED', {
+      message: 'Souvenir enregistré dans Google Drive.',
+      fileId: fileId,
+      filename: filename,
+      mediaType: mediaType,
+      size: fileSize
+    });
+
+    return buildResponse_({
+      success: true,
+      uploadId: uploadId,
+      status: 'COMPLETED'
+    });
+
+  } catch (error) {
+    const safeError = getPublicErrorMessage_(error);
+
+    Logger.log(
+      'Erreur doPost [' + uploadId + '] : ' +
+      String(error)
+    );
+
+    setStatus_(uploadId, 'FAILED', {
+      error: safeError
+    });
+
+    return buildResponse_({
+      success: false,
+      uploadId: uploadId,
+      status: 'FAILED',
+      error: safeError
+    });
   }
 }
 
+
+/* ═══════════════════════════════════════════════════════
+   CONSULTATION DU STATUT
+   ═══════════════════════════════════════════════════════ */
+
 /**
- * Traite les requêtes GET (Statut d'upload via JSONP).
+ * Exemple :
+ *
+ * /exec?action=status
+ *      &uploadId=identifiant
+ *      &prefix=nomCallback
  */
 function doGet(e) {
   try {
-    const action = e.parameter.action;
-    const uploadId = e.parameter.uploadId;
-    const prefix = e.parameter.prefix;
+    const parameters = e && e.parameter
+      ? e.parameter
+      : {};
 
-    if (action === 'status' && uploadId && prefix) {
-      // Sécurisation du nom de callback (JSONP) pour éviter l'injection de code
-      if (!/^[a-zA-Z0-9_]+$/.test(prefix)) {
-        return ContentService.createTextOutput("Invalid callback name.").setMimeType(ContentService.MimeType.TEXT);
-      }
+    const action = String(
+      parameters.action || ''
+    );
 
-      // Lire le statut
+    if (action === 'status') {
+      const uploadId = validateUploadId_(
+        parameters.uploadId || ''
+      );
+
+      const callbackName = validateCallbackName_(
+        parameters.prefix || ''
+      );
+
       const statusData = getStatus_(uploadId);
-
-      // Si le statut demande une suppression (COMPLETED ou FAILED), on le nettoie pour ne pas saturer Properties
-      if (statusData.status === 'COMPLETED' || statusData.status === 'FAILED') {
-         deleteStatus_(uploadId);
-      }
-
       const jsonResponse = JSON.stringify(statusData);
-      
-      // Retour JSONP (le ContentService de GAS redirige, ce format permet au navigateur de le lire)
+
+      /**
+       * Ne pas supprimer le statut ici.
+       * Le frontend peut avoir besoin de le relire plusieurs fois.
+       */
       return ContentService
-        .createTextOutput(`${prefix}(${jsonResponse});`)
-        .setMimeType(ContentService.MimeType.JAVASCRIPT);
+        .createTextOutput(
+          `${callbackName}(${jsonResponse});`
+        )
+        .setMimeType(
+          ContentService.MimeType.JAVASCRIPT
+        );
     }
-    
-    // Par défaut, retourne l'état du backend
+
+    if (action === 'health') {
+      return ContentService
+        .createTextOutput(
+          JSON.stringify({
+            success: true,
+            service: 'Livre Photos Souvenirs',
+            status: 'OPERATIONAL',
+            date: new Date().toISOString()
+          })
+        )
+        .setMimeType(
+          ContentService.MimeType.JSON
+        );
+    }
+
     return ContentService
-      .createTextOutput('Backend Livre Photos Opérationnel.')
-      .setMimeType(ContentService.MimeType.TEXT);
-      
-  } catch (err) {
-    return ContentService.createTextOutput("Error").setMimeType(ContentService.MimeType.TEXT);
+      .createTextOutput(
+        'Backend Livre Photos opérationnel.'
+      )
+      .setMimeType(
+        ContentService.MimeType.TEXT
+      );
+
+  } catch (error) {
+    return ContentService
+      .createTextOutput(
+        'Erreur de requête.'
+      )
+      .setMimeType(
+        ContentService.MimeType.TEXT
+      );
   }
 }
 
-// ── GESTION DES STATUTS (CacheService + PropertiesService) ──
 
-function setStatus_(uploadId, status, extraData = {}) {
-  const data = {
-    uploadId: uploadId,
-    status: status,
-    updatedAt: new Date().toISOString(),
-    ...extraData
-  };
-  
+/* ═══════════════════════════════════════════════════════
+   GESTION DES STATUTS
+   ═══════════════════════════════════════════════════════ */
+
+function setStatus_(uploadId, status, extraData) {
+  const data = Object.assign(
+    {
+      uploadId: uploadId,
+      status: status,
+      updatedAt: new Date().toISOString(),
+      expiresAt: Date.now() + STATUS_RETENTION_MS
+    },
+    extraData || {}
+  );
+
   const jsonString = JSON.stringify(data);
-  
-  // Écriture rapide en cache (Expire dans 1h)
-  try {
-    CacheService.getScriptCache().put('upload_' + uploadId, jsonString, CACHE_EXPIRATION_SECONDS);
-  } catch (e) {}
+  const key = STATUS_PREFIX + uploadId;
 
-  // Fallback persistant pour éviter l'éviction
   try {
-    PropertiesService.getScriptProperties().setProperty('upload_' + uploadId, jsonString);
-  } catch (e) {}
+    CacheService
+      .getScriptCache()
+      .put(
+        key,
+        jsonString,
+        CACHE_EXPIRATION_SECONDS
+      );
+  } catch (cacheError) {
+    Logger.log(
+      'Avertissement CacheService : ' +
+      String(cacheError)
+    );
+  }
+
+  try {
+    PropertiesService
+      .getScriptProperties()
+      .setProperty(
+        key,
+        jsonString
+      );
+  } catch (propertyError) {
+    Logger.log(
+      'Avertissement PropertiesService : ' +
+      String(propertyError)
+    );
+  }
 }
+
 
 function getStatus_(uploadId) {
+  const key = STATUS_PREFIX + uploadId;
   let jsonString = null;
-  
-  // Chercher d'abord dans le Cache (rapide)
+
   try {
-    jsonString = CacheService.getScriptCache().get('upload_' + uploadId);
-  } catch (e) {}
-  
-  // Si vide, chercher dans les Propriétés (fallback)
+    jsonString = CacheService
+      .getScriptCache()
+      .get(key);
+  } catch (cacheError) {
+    jsonString = null;
+  }
+
   if (!jsonString) {
     try {
-      jsonString = PropertiesService.getScriptProperties().getProperty('upload_' + uploadId);
-    } catch (e) {}
-  }
-
-  if (jsonString) {
-    try {
-      return JSON.parse(jsonString);
-    } catch (e) {
-      return { uploadId: uploadId, status: 'FAILED', error: 'Données corrompues.' };
+      jsonString = PropertiesService
+        .getScriptProperties()
+        .getProperty(key);
+    } catch (propertyError) {
+      jsonString = null;
     }
   }
-  
-  return { uploadId: uploadId, status: 'PENDING', message: 'En attente...' };
+
+  if (!jsonString) {
+    return {
+      uploadId: uploadId,
+      status: 'PENDING',
+      message: 'En attente de réception.'
+    };
+  }
+
+  try {
+    const statusData = JSON.parse(jsonString);
+
+    if (
+      statusData.expiresAt &&
+      Number(statusData.expiresAt) < Date.now()
+    ) {
+      deleteStatus_(uploadId);
+
+      return {
+        uploadId: uploadId,
+        status: 'PENDING',
+        message: 'Statut expiré.'
+      };
+    }
+
+    return statusData;
+
+  } catch (parseError) {
+    return {
+      uploadId: uploadId,
+      status: 'FAILED',
+      error: 'Le statut est illisible.'
+    };
+  }
 }
+
 
 function deleteStatus_(uploadId) {
+  const key = STATUS_PREFIX + uploadId;
+
   try {
-    CacheService.getScriptCache().remove('upload_' + uploadId);
-    PropertiesService.getScriptProperties().deleteProperty('upload_' + uploadId);
-  } catch (e) {}
-}
+    CacheService
+      .getScriptCache()
+      .remove(key);
+  } catch (cacheError) {
+    // Rien à faire.
+  }
 
-// ── UTILITAIRES ──
-
-function getOrCreateFolder_(parentFolder, folderName) {
-  const it = parentFolder.getFoldersByName(folderName);
-  if (it.hasNext()) return it.next();
-  return parentFolder.createFolder(folderName);
-}
-
-function sanitize_(name) {
-  return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').slice(0, 120);
-}
-
-function buildResponse_(data) {
-  return ContentService
-    .createTextOutput(JSON.stringify(data))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-// ── GOOGLE SHEET ──
-
-function logToSheet_(memoryId, name, message, type, filename, mime, size, duration, orientation, filter, driveId, folder) {
   try {
-    const ss = SpreadsheetApp.openById(SHEET_ID);
-    let sheet = ss.getSheetByName(SHEET_TAB);
+    PropertiesService
+      .getScriptProperties()
+      .deleteProperty(key);
+  } catch (propertyError) {
+    // Rien à faire.
+  }
+}
+
+
+/**
+ * Peut être exécutée manuellement ou par un déclencheur horaire.
+ * Supprime les anciens statuts de PropertiesService.
+ */
+function cleanupOldStatuses() {
+  const scriptProperties =
+    PropertiesService.getScriptProperties();
+
+  const allProperties =
+    scriptProperties.getProperties();
+
+  const now = Date.now();
+  let deletedCount = 0;
+
+  Object.keys(allProperties).forEach(function (key) {
+    if (key.indexOf(STATUS_PREFIX) !== 0) {
+      return;
+    }
+
+    try {
+      const data = JSON.parse(
+        allProperties[key]
+      );
+
+      if (
+        data.expiresAt &&
+        Number(data.expiresAt) < now
+      ) {
+        scriptProperties.deleteProperty(key);
+        deletedCount++;
+      }
+
+    } catch (error) {
+      scriptProperties.deleteProperty(key);
+      deletedCount++;
+    }
+  });
+
+  Logger.log(
+    'Statuts supprimés : ' + deletedCount
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════
+   VALIDATIONS
+   ═══════════════════════════════════════════════════════ */
+
+function validateMediaMetadata_(
+  mediaType,
+  mimeType,
+  mediaBase64,
+  duration
+) {
+  if (
+    mediaType !== 'photo' &&
+    mediaType !== 'video'
+  ) {
+    throw new Error(
+      'Type de média invalide.'
+    );
+  }
+
+  if (!mediaBase64) {
+    throw new Error(
+      'Payload incomplet : aucun média reçu.'
+    );
+  }
+
+  const maxBytes =
+    mediaType === 'photo'
+      ? MAX_PHOTO_BYTES
+      : MAX_VIDEO_BYTES;
+
+  /**
+   * Un fichier encodé en base64 est environ 33 % plus grand.
+   */
+  const approximateMaximumBase64Length =
+    Math.ceil(maxBytes * 4 / 3) + 4096;
+
+  if (
+    mediaBase64.length >
+    approximateMaximumBase64Length
+  ) {
+    throw new Error(
+      mediaType === 'photo'
+        ? 'La photo dépasse la taille maximale autorisée.'
+        : 'La vidéo dépasse la taille maximale de 25 Mo.'
+    );
+  }
+
+  if (
+    mediaType === 'photo' &&
+    ALLOWED_PHOTO_MIME_TYPES.indexOf(mimeType) === -1
+  ) {
+    throw new Error(
+      'Format photo non autorisé.'
+    );
+  }
+
+  if (
+    mediaType === 'video' &&
+    ALLOWED_VIDEO_MIME_TYPES.indexOf(mimeType) === -1
+  ) {
+    throw new Error(
+      'Format vidéo non autorisé.'
+    );
+  }
+
+  if (
+    mediaType === 'video' &&
+    (!Number.isFinite(duration) ||
+      duration < 0 ||
+      duration > MAX_VIDEO_DURATION_SECONDS)
+  ) {
+    throw new Error(
+      'La vidéo dépasse la durée maximale de 60 secondes.'
+    );
+  }
+}
+
+
+function validateDecodedFile_(
+  mediaType,
+  mimeType,
+  fileSize,
+  duration
+) {
+  if (!fileSize || fileSize <= 0) {
+    throw new Error(
+      'Le fichier reçu est vide.'
+    );
+  }
+
+  if (mediaType === 'photo') {
+    if (
+      ALLOWED_PHOTO_MIME_TYPES.indexOf(mimeType) === -1
+    ) {
+      throw new Error(
+        'Format photo non autorisé.'
+      );
+    }
+
+    if (fileSize > MAX_PHOTO_BYTES) {
+      throw new Error(
+        'La photo dépasse la taille maximale autorisée.'
+      );
+    }
+  }
+
+  if (mediaType === 'video') {
+    if (
+      ALLOWED_VIDEO_MIME_TYPES.indexOf(mimeType) === -1
+    ) {
+      throw new Error(
+        'Format vidéo non autorisé.'
+      );
+    }
+
+    if (fileSize > MAX_VIDEO_BYTES) {
+      throw new Error(
+        'La vidéo dépasse la taille maximale de 25 Mo.'
+      );
+    }
+
+    if (
+      !Number.isFinite(duration) ||
+      duration < 0 ||
+      duration > MAX_VIDEO_DURATION_SECONDS
+    ) {
+      throw new Error(
+        'La vidéo dépasse la durée maximale de 60 secondes.'
+      );
+    }
+  }
+}
+
+
+function validateUploadId_(uploadId) {
+  const value = String(uploadId || '').trim();
+
+  if (
+    !value ||
+    !/^[a-zA-Z0-9_-]{1,100}$/.test(value)
+  ) {
+    throw new Error(
+      'Identifiant d’upload invalide.'
+    );
+  }
+
+  return value;
+}
+
+
+function validateCallbackName_(callbackName) {
+  const value = String(
+    callbackName || ''
+  ).trim();
+
+  if (
+    !/^[a-zA-Z_$][a-zA-Z0-9_$]{0,63}$/.test(value)
+  ) {
+    throw new Error(
+      'Nom de callback invalide.'
+    );
+  }
+
+  return value;
+}
+
+
+function normalizeMimeType_(mimeType) {
+  return String(mimeType || '')
+    .toLowerCase()
+    .split(';')[0]
+    .trim();
+}
+
+
+function normalizeBase64_(value) {
+  return String(value || '')
+    .replace(
+      /^data:[^;]+;base64,/i,
+      ''
+    )
+    .replace(/\s/g, '');
+}
+
+
+function normalizeFilename_(filename, mimeType) {
+  const extension =
+    MIME_EXTENSIONS[mimeType];
+
+  if (!extension) {
+    throw new Error(
+      'Extension de fichier inconnue.'
+    );
+  }
+
+  const sanitizedName = sanitize_(
+    filename || `${Date.now()}_souvenir`
+  );
+
+  const nameWithoutExtension =
+    sanitizedName.replace(/\.[^.]+$/, '');
+
+  return (
+    nameWithoutExtension.slice(0, 100) +
+    extension
+  );
+}
+
+
+function sanitize_(value) {
+  return String(value || '')
+    .replace(
+      /[<>:"/\\|?*\x00-\x1F]/g,
+      '_'
+    )
+    .trim()
+    .slice(0, 120);
+}
+
+
+function safeText_(value, maximumLength) {
+  return String(value || '')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+    .trim()
+    .slice(0, maximumLength);
+}
+
+
+function getPublicErrorMessage_(error) {
+  const message =
+    error && error.message
+      ? String(error.message)
+      : '';
+
+  const allowedMessages = [
+    'Requête POST invalide.',
+    'Payload JSON invalide.',
+    'Identifiant d’upload invalide.',
+    'Payload incomplet : aucun média reçu.',
+    'Type de média invalide.',
+    'Format photo non autorisé.',
+    'Format vidéo non autorisé.',
+    'La photo dépasse la taille maximale autorisée.',
+    'La vidéo dépasse la taille maximale de 25 Mo.',
+    'La vidéo dépasse la durée maximale de 60 secondes.',
+    'Le fichier reçu est vide.',
+    'Extension de fichier inconnue.'
+  ];
+
+  if (
+    allowedMessages.indexOf(message) !== -1
+  ) {
+    return message;
+  }
+
+  return 'Erreur interne lors de l’enregistrement du souvenir.';
+}
+
+
+/* ═══════════════════════════════════════════════════════
+   GOOGLE DRIVE
+   ═══════════════════════════════════════════════════════ */
+
+function getOrCreateFolder_(
+  parentFolder,
+  folderName
+) {
+  const folders =
+    parentFolder.getFoldersByName(folderName);
+
+  if (folders.hasNext()) {
+    return folders.next();
+  }
+
+  return parentFolder.createFolder(
+    folderName
+  );
+}
+
+
+/**
+ * À exécuter manuellement une seule fois.
+ *
+ * Sélectionne « setupDrive » dans la liste des fonctions,
+ * puis clique sur « Exécuter ».
+ */
+function setupDrive() {
+  const mainFolder =
+    DriveApp.getFolderById(
+      DRIVE_MAIN_FOLDER_ID
+    );
+
+  const photosFolder =
+    getOrCreateFolder_(
+      mainFolder,
+      'Photos'
+    );
+
+  const videosFolder =
+    getOrCreateFolder_(
+      mainFolder,
+      'Vidéos'
+    );
+
+  const temporaryFolder =
+    getOrCreateFolder_(
+      mainFolder,
+      'Temporaires'
+    );
+
+  Logger.log(
+    'Dossier principal : ' +
+    mainFolder.getName()
+  );
+
+  Logger.log(
+    'Photos : ' +
+    photosFolder.getUrl()
+  );
+
+  Logger.log(
+    'Vidéos : ' +
+    videosFolder.getUrl()
+  );
+
+  Logger.log(
+    'Temporaires : ' +
+    temporaryFolder.getUrl()
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════
+   GOOGLE SHEETS — FACULTATIF
+   ═══════════════════════════════════════════════════════ */
+
+function logToSheet_(
+  memoryId,
+  name,
+  message,
+  type,
+  filename,
+  mime,
+  size,
+  duration,
+  orientation,
+  filter,
+  driveId,
+  folder
+) {
+  try {
+    const spreadsheet =
+      SpreadsheetApp.openById(
+        SHEET_ID
+      );
+
+    let sheet =
+      spreadsheet.getSheetByName(
+        SHEET_TAB
+      );
 
     if (!sheet) {
-      sheet = ss.insertSheet(SHEET_TAB);
-      const headers = ['Memory ID', 'Date', 'Prénom', 'Message', 'Type', 'Nom fichier', 'MIME', 'Taille (octets)', 'Durée', 'Orientation', 'Filtre', 'ID Drive', 'Dossier'];
+      sheet =
+        spreadsheet.insertSheet(
+          SHEET_TAB
+        );
+
+      const headers = [
+        'Memory ID',
+        'Date',
+        'Prénom',
+        'Message',
+        'Type',
+        'Nom fichier',
+        'MIME',
+        'Taille (octets)',
+        'Durée',
+        'Orientation',
+        'Filtre',
+        'ID Drive',
+        'Dossier'
+      ];
+
       sheet.appendRow(headers);
-      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#5D262C').setFontColor('#F9F7F2');
+
+      sheet
+        .getRange(
+          1,
+          1,
+          1,
+          headers.length
+        )
+        .setFontWeight('bold')
+        .setBackground('#5D262C')
+        .setFontColor('#F9F7F2');
+
       sheet.setFrozenRows(1);
     }
 
@@ -239,7 +910,25 @@ function logToSheet_(memoryId, name, message, type, filename, mime, size, durati
       folder
     ]);
 
-  } catch (err) {
-    Logger.log('⚠️ Erreur Sheet : ' + err.toString());
+  } catch (error) {
+    Logger.log(
+      'Erreur Google Sheets : ' +
+      String(error)
+    );
   }
+}
+
+
+/* ═══════════════════════════════════════════════════════
+   RÉPONSE HTTP
+   ═══════════════════════════════════════════════════════ */
+
+function buildResponse_(data) {
+  return ContentService
+    .createTextOutput(
+      JSON.stringify(data)
+    )
+    .setMimeType(
+      ContentService.MimeType.JSON
+    );
 }
