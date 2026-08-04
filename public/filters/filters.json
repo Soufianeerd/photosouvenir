@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "filters": [
+    {
+      "id": "none",
+      "name": "Aucun filtre",
+      "category": "system",
+      "active": true,
+      "order": 0,
+      "mediaTypes": ["photo", "video"],
+      "orientations": ["portrait", "landscape"]
+    },
+    {
+      "id": "ss-floral-burgundy-01",
+      "name": "Floral Burgundy",
+      "category": "elegant",
+      "active": true,
+      "order": 1,
+      "mediaTypes": ["photo", "video"],
+      "orientations": ["portrait"]
+    },
+    {
+      "id": "ss-ivory-gold-02",
+      "name": "Ivory Gold",
+      "category": "elegant",
+      "active": true,
+      "order": 2,
+      "mediaTypes": ["photo", "video"],
+      "orientations": ["portrait"]
+    },
+    {
+      "id": "salma-soufiane-gold-03",
+      "name": "Salma & Soufiane Gold",
+      "category": "elegant",
+      "active": true,
+      "order": 3,
+      "mediaTypes": ["photo", "video"],
+      "orientations": ["portrait"]
+    },
+    {
+      "id": "salma-soufiane-gold-04",
+      "name": "Salma & Soufiane Gold 2",
+      "category": "elegant",
+      "active": true,
+      "order": 4,
+      "mediaTypes": ["photo", "video"],
+      "orientations": ["portrait"]
+    },
+    {
+      "id": "salma-soufiane-ivory-05",
+      "name": "Salma & Soufiane Ivory",
+      "category": "elegant",
+      "active": true,
+      "order": 5,
+      "mediaTypes": ["photo", "video"],
+      "orientations": ["portrait"]
+    }
+  ]
+}

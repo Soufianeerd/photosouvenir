@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#F9F7F2" />
+  <!-- [EDIT] Titre de l'onglet -->
+  <title>Photos Souvenirs — Soufiane & Salma</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Montserrat:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ═══════════════════ TOKENS ═══════════════════ */
+    :root {
+      --cream:         #F9F7F2;
+      --cream-dark:    #F0EBE3;
+      --cream-mid:     #EDE8DF;
+      --bordeaux:      #5D262C;
+      --bordeaux-lt:   #7a3339;
+      --bordeaux-pale: #f0e8e8;
+      --ink:           #2d1214;
+      --muted:         #9a7c7e;
+      --font-serif:    'Cormorant Garamond', Georgia, serif;
+      --font-sans:     'Montserrat', system-ui, sans-serif;
+      --ease:          cubic-bezier(0.4, 0, 0.2, 1);
+      --ease-spring:   cubic-bezier(0.34, 1.56, 0.64, 1);
+      --t:             0.35s;
+      --r:             3px;
+    }
+
+    /* ═══════════════════ RESET ═══════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      font-family: var(--font-sans);
+      background: var(--cream);
+      color: var(--ink);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ═══════════════════ PAGE ═══════════════════ */
+    .page {
+      width: 100%;
+      max-width: 480px;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      padding: 0 1.5rem 2.5rem;
+    }
+
+    /* ── HEADER ── */
+    .page-header {
+      text-align: center;
+      padding: 2.75rem 0 1.75rem;
+      border-bottom: 1px solid rgba(93,38,44,0.08);
+      margin-bottom: 2rem;
+    }
+    .header__ornament { display: block; font-size: 0.55rem; letter-spacing: 0.35em; color: var(--bordeaux); opacity: 0.5; margin-bottom: 0.65rem; text-transform: uppercase; }
+    .header__title    { font-family: var(--font-serif); font-size: clamp(1.8rem, 7vw, 2.4rem); font-weight: 300; color: var(--ink); line-height: 1.2; margin-bottom: 0.4rem; }
+    .header__title em { font-style: italic; color: var(--bordeaux); }
+    .header__sub      { font-family: var(--font-sans); font-size: 0.68rem; font-weight: 300; letter-spacing: 0.14em; color: var(--muted); text-transform: uppercase; }
+
+    /* ── CARD ── */
+    .card { background: var(--cream); border: 1px solid rgba(93,38,44,0.1); border-radius: var(--r); padding: 2rem 1.5rem; flex: 1; }
+
+    /* ── ÉTAPES ── */
+    .step { display: none; animation: stepIn 0.35s var(--ease) both; }
+    .step.active { display: block; }
+    @keyframes stepIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    .step-indicator { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-bottom: 1.75rem; }
+    .step-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(93,38,44,0.15); transition: var(--t) var(--ease); }
+    .step-dot.done    { background: var(--bordeaux); opacity: 0.4; }
+    .step-dot.current { background: var(--bordeaux); transform: scale(1.5); }
+
+    .step-label { font-family: var(--font-sans); font-size: 0.58rem; font-weight: 500; letter-spacing: 0.28em; text-transform: uppercase; color: var(--bordeaux); margin-bottom: 0.4rem; display: block; }
+    .step-title { font-family: var(--font-serif); font-size: clamp(1.4rem, 5vw, 1.85rem); font-weight: 300; color: var(--ink); line-height: 1.25; margin-bottom: 0.4rem; }
+    .step-desc  { font-family: var(--font-sans); font-size: 0.73rem; font-weight: 300; color: var(--muted); line-height: 1.75; margin-bottom: 1.75rem; }
+
+    /* ── CHAMPS ── */
+    .field { margin-bottom: 1.25rem; }
+    .field__label { display: block; font-family: var(--font-sans); font-size: 0.6rem; font-weight: 500; letter-spacing: 0.2em; text-transform: uppercase; color: var(--bordeaux); margin-bottom: 0.5rem; }
+    .field__input { width: 100%; background: var(--cream-dark); border: 1px solid rgba(93,38,44,0.13); border-radius: var(--r); padding: 0.85rem 1rem; font-family: var(--font-sans); font-size: 1rem; font-weight: 300; color: var(--ink); transition: var(--t) var(--ease); -webkit-appearance: none; outline: none; }
+    .field__input::placeholder { color: rgba(58,26,29,0.3); }
+    .field__input:focus { border-color: var(--bordeaux); box-shadow: 0 0 0 3px rgba(93,38,44,0.07); background: var(--cream); }
+    .field__input.error { border-color: #c0392b; }
+    .field__hint { font-family: var(--font-sans); font-size: 0.62rem; font-weight: 300; color: var(--muted); margin-top: 0.4rem; }
+
+    /* ── BOUTONS ── */
+    .btn { display: flex; align-items: center; justify-content: center; gap: 0.6rem; width: 100%; padding: 1rem 1.5rem; border: none; border-radius: var(--r); font-family: var(--font-sans); font-size: 0.68rem; font-weight: 500; letter-spacing: 0.2em; text-transform: uppercase; cursor: pointer; transition: var(--t) var(--ease); margin-bottom: 0.75rem; -webkit-tap-highlight-color: transparent; }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+    .btn--primary { background: var(--bordeaux); color: var(--cream); }
+    .btn--primary:not(:disabled):hover { background: var(--bordeaux-lt); transform: translateY(-2px); box-shadow: 0 8px 28px rgba(93,38,44,0.22); }
+    .btn--outline { background: transparent; color: var(--bordeaux); border: 1px solid rgba(93,38,44,0.22); }
+    .btn--outline:not(:disabled):hover { background: var(--bordeaux-pale); }
+    .btn--ghost { background: transparent; color: var(--muted); border: 1px solid rgba(93,38,44,0.1); font-size: 0.62rem; }
+    .btn--download { background: var(--cream-dark); color: var(--bordeaux); border: 1px solid rgba(93,38,44,0.18); }
+    .btn--download:not(:disabled):hover { background: var(--bordeaux-pale); transform: translateY(-1px); }
+    .btn__icon { font-size: 1.1rem; line-height: 1; }
+
+    /* ── ZONE DE SÉLECTION PHOTO ── */
+    /* Inputs fichier cachés (déclenchés par les boutons) */
+    #cameraInput, #galleryInput { display: none; }
+
+    /* Zone drop / tap */
+    .photo-zone {
+      border: 1.5px dashed rgba(93,38,44,0.22);
+      border-radius: var(--r);
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: var(--t) var(--ease);
+      margin-bottom: 1.25rem;
+      background: var(--cream-dark);
+      position: relative;
+    }
+    .photo-zone:hover { border-color: var(--bordeaux); background: var(--bordeaux-pale); }
+    .photo-zone__icon { font-size: 2.5rem; margin-bottom: 0.75rem; display: block; }
+    .photo-zone__text { font-family: var(--font-serif); font-size: 1.1rem; font-weight: 300; color: var(--muted); }
+    .photo-zone__sub  { font-family: var(--font-sans); font-size: 0.65rem; font-weight: 300; color: rgba(93,38,44,0.35); margin-top: 0.4rem; }
+
+    /* Séparateur "ou" */
+    .or-sep { display: flex; align-items: center; gap: 0.75rem; margin: 0.75rem 0 1rem; }
+    .or-sep__line { flex: 1; height: 1px; background: rgba(93,38,44,0.1); }
+    .or-sep__text { font-family: var(--font-sans); font-size: 0.6rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+
+    /* ── APERÇU PHOTO ── */
+    .preview-wrap {
+      position: relative;
+      width: 100%;
+      margin-bottom: 1.5rem;
+      border-radius: var(--r);
+      overflow: hidden;
+      background: var(--ink);
+    }
+    .preview-img {
+      width: 100%;
+      max-height: 380px;
+      object-fit: contain;
+      display: block;
+    }
+    .preview-badge {
+      position: absolute;
+      top: 0.65rem; left: 0.65rem;
+      background: rgba(45,18,20,0.6);
+      color: var(--cream);
+      font-family: var(--font-sans);
+      font-size: 0.55rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      padding: 0.3rem 0.6rem;
+      border-radius: 2px;
+      backdrop-filter: blur(4px);
+    }
+    .preview-change {
+      position: absolute;
+      bottom: 0.65rem; right: 0.65rem;
+      background: rgba(249,247,242,0.9);
+      color: var(--bordeaux);
+      border: none;
+      font-family: var(--font-sans);
+      font-size: 0.58rem;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 0.45rem 0.85rem;
+      border-radius: 2px;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+    }
+
+    /* ── INFOS PHOTO (nom + poids) ── */
+    .photo-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      background: var(--cream-dark);
+      border: 1px solid rgba(93,38,44,0.08);
+      border-radius: var(--r);
+      padding: 0.85rem 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .photo-meta__icon { font-size: 1.3rem; }
+    .photo-meta__name { font-family: var(--font-serif); font-size: 1rem; font-weight: 400; color: var(--ink); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .photo-meta__size { font-family: var(--font-sans); font-size: 0.62rem; font-weight: 300; color: var(--muted); }
+
+    /* ── TOGGLE "M'ENVOYER LA PHOTO" ── */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1rem 1.1rem;
+      background: var(--cream-dark);
+      border: 1px solid rgba(93,38,44,0.1);
+      border-radius: var(--r);
+      cursor: pointer;
+      margin-bottom: 1.25rem;
+      transition: var(--t) var(--ease);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .toggle-row:hover { border-color: rgba(93,38,44,0.22); }
+    .toggle-row__text { flex: 1; }
+    .toggle-row__label { font-family: var(--font-sans); font-size: 0.72rem; font-weight: 500; color: var(--ink); display: block; }
+    .toggle-row__sub   { font-family: var(--font-sans); font-size: 0.62rem; font-weight: 300; color: var(--muted); }
+
+    /* Toggle switch */
+    .toggle-switch { position: relative; width: 44px; height: 26px; flex-shrink: 0; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle-track {
+      position: absolute; inset: 0;
+      background: rgba(93,38,44,0.15);
+      border-radius: 13px;
+      transition: background var(--t) var(--ease);
+      cursor: pointer;
+    }
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: white;
+      transition: transform var(--t) var(--ease-spring);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+    }
+    .toggle-switch input:checked + .toggle-track { background: var(--bordeaux); }
+    .toggle-switch input:checked + .toggle-track::after { transform: translateX(18px); }
+
+    /* Email conditionnel (visible si toggle activé) */
+    .email-conditional {
+      max-height: 0; overflow: hidden; opacity: 0;
+      transition: max-height 0.4s var(--ease), opacity 0.4s var(--ease), margin 0.4s var(--ease);
+      margin-bottom: 0;
+    }
+    .email-conditional.visible {
+      max-height: 100px; opacity: 1; margin-bottom: 1.25rem;
+    }
+
+    /* ── BARRE DE PROGRESSION UPLOAD ── */
+    .upload-progress { margin-bottom: 1rem; display: none; }
+    .upload-progress.visible { display: block; }
+    .upload-progress__bar { height: 2px; background: rgba(93,38,44,0.08); border-radius: 1px; overflow: hidden; margin-bottom: 0.5rem; }
+    .upload-progress__fill { height: 100%; background: var(--bordeaux); border-radius: 1px; width: 0%; transition: width 0.4s var(--ease); }
+    .upload-progress__text { font-family: var(--font-sans); font-size: 0.62rem; letter-spacing: 0.15em; color: var(--muted); text-align: center; }
+
+    /* ── CHARGEMENT ── */
+    .loading-state { display: none; flex-direction: column; align-items: center; justify-content: center; padding: 2.5rem 0; }
+    .loading-state.visible { display: flex; }
+    .spinner { width: 36px; height: 36px; border: 2px solid rgba(93,38,44,0.12); border-top-color: var(--bordeaux); border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 1.25rem; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { font-family: var(--font-sans); font-size: 0.68rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); text-align: center; }
+
+    /* ── SUCCÈS ── */
+    .success-state { text-align: center; padding: 1rem 0; }
+    .success-ornament { font-size: 3rem; margin-bottom: 1.25rem; display: block; }
+    .success-title { font-family: var(--font-serif); font-size: clamp(1.5rem, 6vw, 2rem); font-weight: 300; color: var(--bordeaux); font-style: italic; margin-bottom: 0.6rem; line-height: 1.3; }
+    .success-text  { font-family: var(--font-sans); font-size: 0.73rem; font-weight: 300; color: var(--muted); line-height: 1.8; }
+    .success-divider { display: flex; align-items: center; gap: 0.75rem; margin: 1.25rem auto; max-width: 140px; }
+    .success-divider__line { flex: 1; height: 1px; background: rgba(93,38,44,0.12); }
+    .success-divider__gem  { font-size: 0.55rem; color: var(--bordeaux); opacity: 0.4; }
+
+    /* Mini aperçu dans la confirmation */
+    .success-thumb { width: 90px; height: 90px; object-fit: cover; border-radius: 50%; margin: 0 auto 1.25rem; display: block; border: 2px solid rgba(93,38,44,0.12); }
+
+    /* ── ALERTE ── */
+    .alert { display: none; background: #fff0f0; border: 1px solid rgba(192,57,43,0.18); border-radius: var(--r); padding: 0.85rem 1rem; margin-bottom: 1.25rem; font-family: var(--font-sans); font-size: 0.72rem; font-weight: 300; color: #8b1f1f; line-height: 1.5; animation: stepIn 0.3s var(--ease) both; }
+    .alert.visible { display: block; }
+
+    /* ── FOOTER ── */
+    .page-footer { text-align: center; padding: 1.75rem 0 0; margin-top: auto; }
+    .footer-text  { font-family: var(--font-sans); font-size: 0.55rem; font-weight: 300; letter-spacing: 0.2em; text-transform: uppercase; color: rgba(58,26,29,0.2); }
+
+    /* ── COMPRESSION INDICATOR ── */
+    .compress-badge { display: inline-block; background: rgba(93,38,44,0.08); color: var(--bordeaux); font-family: var(--font-sans); font-size: 0.58rem; letter-spacing: 0.12em; text-transform: uppercase; padding: 0.25rem 0.6rem; border-radius: 2px; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+
+  <main class="page">
+
+    <!-- ── EN-TÊTE ── -->
+    <header class="page-header">
+      <span class="header__ornament">✦ Mariage ✦</span>
+      <!-- [EDIT] Titre -->
+      <h1 class="header__title">Photos<br><em>Souvenirs</em></h1>
+      <!-- [EDIT] Sous-titre -->
+      <p class="header__sub">Soufiane &amp; Salma · 23 Oct. 2026</p>
+    </header>
+
+    <div class="card">
+
+      <!-- Alerte globale -->
+      <div class="alert" id="alertBox" role="alert"></div>
+
+      <!-- ══════════════════════════════════════════
+           ÉTAPE 1 — Prénom
+           ══════════════════════════════════════════ -->
+      <div class="step active" id="step1">
+
+        <div class="step-indicator">
+          <div class="step-dot current"></div>
+          <div class="step-dot"></div>
+          <div class="step-dot"></div>
+          <div class="step-dot"></div>
+        </div>
+
+        <span class="step-label">Étape 1 / 3</span>
+        <h2 class="step-title">Qui êtes-vous&nbsp;?</h2>
+        <p class="step-desc">
+          Offrez une photo souvenir aux mariés. Elle sera conservée précieusement dans leur album digital.
+        </p>
+
+        <div class="field">
+          <label class="field__label" for="nameInput">Votre prénom</label>
+          <input class="field__input" type="text" id="nameInput"
+                 placeholder="Ex : Sophie" maxlength="50"
+                 autocomplete="given-name" autocorrect="off" spellcheck="false" />
+        </div>
+
+        <div class="field">
+          <label class="field__label" for="relationInput">
+            Vous êtes… <span style="opacity:.5;font-weight:300;letter-spacing:0;text-transform:none;font-size:.8em">(optionnel)</span>
+          </label>
+          <input class="field__input" type="text" id="relationInput"
+                 placeholder="Ex : Ami de Soufiane, Cousine de Salma…" maxlength="80" />
+        </div>
+
+        <button class="btn btn--primary" onclick="goToPhoto()">
+          <span class="btn__icon">📷</span>
+          Choisir / prendre une photo
+        </button>
+
+      </div>
+
+      <!-- ══════════════════════════════════════════
+           ÉTAPE 2 — Sélection photo
+           ══════════════════════════════════════════ -->
+      <div class="step" id="step2">
+
+        <div class="step-indicator">
+          <div class="step-dot done"></div>
+          <div class="step-dot current"></div>
+          <div class="step-dot"></div>
+          <div class="step-dot"></div>
+        </div>
+
+        <span class="step-label">Étape 2 / 3</span>
+        <h2 class="step-title">Votre photo</h2>
+        <p class="step-desc">
+          Prenez une photo à l'instant ou choisissez-en une depuis votre galerie.
+        </p>
+
+        <!-- Inputs fichier (cachés) -->
+        <!-- capture="environment" = caméra arrière sur mobile -->
+        <input type="file" accept="image/*" capture="environment" id="cameraInput" />
+        <!-- Sans capture = galerie + caméra au choix -->
+        <input type="file" accept="image/*" id="galleryInput" />
+
+        <!-- Bouton caméra (ouvre directement la caméra) -->
+        <button class="btn btn--primary" onclick="document.getElementById('cameraInput').click()">
+          <span class="btn__icon">📷</span>
+          Prendre une photo maintenant
+        </button>
+
+        <!-- Séparateur -->
+        <div class="or-sep">
+          <span class="or-sep__line"></span>
+          <span class="or-sep__text">ou</span>
+          <span class="or-sep__line"></span>
+        </div>
+
+        <!-- Bouton galerie -->
+        <button class="btn btn--outline" onclick="document.getElementById('galleryInput').click()">
+          <span class="btn__icon">🖼️</span>
+          Choisir depuis ma galerie
+        </button>
+
+        <!-- Zone drag & drop (desktop) -->
+        <div class="photo-zone" id="dropZone" onclick="document.getElementById('galleryInput').click()">
+          <span class="photo-zone__icon">⬆️</span>
+          <p class="photo-zone__text">Déposez votre photo ici</p>
+          <p class="photo-zone__sub">JPG, PNG, HEIC · max 20 Mo</p>
+        </div>
+
+        <button class="btn btn--ghost" onclick="backToStep1()">
+          ← Modifier mon prénom
+        </button>
+
+      </div>
+
+      <!-- ══════════════════════════════════════════
+           ÉTAPE 3 — Aperçu + légende + envoi
+           ══════════════════════════════════════════ -->
+      <div class="step" id="step3">
+
+        <div class="step-indicator">
+          <div class="step-dot done"></div>
+          <div class="step-dot done"></div>
+          <div class="step-dot current"></div>
+          <div class="step-dot"></div>
+        </div>
+
+        <span class="step-label">Étape 3 / 3</span>
+        <h2 class="step-title">Vérifier &amp; envoyer</h2>
+
+        <!-- Aperçu de la photo -->
+        <div class="preview-wrap" id="previewWrap">
+          <img class="preview-img" id="previewImg" alt="Aperçu de votre photo" />
+          <span class="preview-badge" id="previewBadge">Aperçu</span>
+          <button class="preview-change" onclick="changePhoto()">Changer ✕</button>
+        </div>
+
+        <!-- Infos fichier compressé -->
+        <div class="photo-meta" id="photoMeta">
+          <span class="photo-meta__icon">🖼️</span>
+          <span class="photo-meta__name" id="metaName">—</span>
+          <span class="photo-meta__size" id="metaSize">—</span>
+        </div>
+
+        <!-- Légende optionnelle -->
+        <div class="field">
+          <label class="field__label" for="captionInput">
+            Légende <span style="opacity:.5;font-weight:300;letter-spacing:0;text-transform:none;font-size:.8em">(optionnel)</span>
+          </label>
+          <input class="field__input" type="text" id="captionInput"
+                 placeholder="Un moment, une pensée…" maxlength="120" />
+        </div>
+
+        <!-- Toggle "m'envoyer la photo" -->
+        <label class="toggle-row" for="sendToggle">
+          <div class="toggle-row__text">
+            <span class="toggle-row__label">Recevoir ma photo par email</span>
+            <span class="toggle-row__sub">Je reçois une copie de ma photo souvenir</span>
+          </div>
+          <div class="toggle-switch">
+            <input type="checkbox" id="sendToggle" onchange="toggleEmail(this.checked)" />
+            <span class="toggle-track"></span>
+          </div>
+        </label>
+
+        <!-- Champ email (visible si toggle activé) -->
+        <div class="email-conditional" id="emailConditional">
+          <div class="field" style="margin-bottom:0">
+            <label class="field__label" for="emailInput">Votre email</label>
+            <input class="field__input" type="email" id="emailInput"
+                   placeholder="votre@email.com" autocomplete="email" />
+            <p class="field__hint">Votre photo vous sera envoyée automatiquement.</p>
+          </div>
+        </div>
+
+        <!-- Barre progression upload -->
+        <div class="upload-progress" id="uploadProgress">
+          <div class="upload-progress__bar">
+            <div class="upload-progress__fill" id="progressFill"></div>
+          </div>
+          <p class="upload-progress__text" id="progressText">Compression en cours…</p>
+        </div>
+
+        <!-- Bouton envoyer -->
+        <button class="btn btn--primary" id="btnSend" onclick="sendPhoto()">
+          <span class="btn__icon">✉️</span>
+          Envoyer aux mariés
+        </button>
+        <button class="btn btn--ghost" onclick="changePhoto()">
+          <span class="btn__icon">🔄</span>
+          Changer de photo
+        </button>
+
+      </div>
+
+      <!-- ══════════════════════════════════════════
+           CHARGEMENT
+           ══════════════════════════════════════════ -->
+      <div class="loading-state" id="loadingState">
+        <div class="spinner"></div>
+        <p class="loading-text" id="loadingText">Envoi en cours…</p>
+      </div>
+
+      <!-- ══════════════════════════════════════════
+           ÉTAPE 4 — Succès
+           ══════════════════════════════════════════ -->
+      <div class="step" id="step4">
+        <div class="success-state">
+          <!-- Mini vignette de la photo envoyée -->
+          <img class="success-thumb" id="successThumb" alt="" />
+          <span class="success-ornament">✦</span>
+          <!-- [EDIT] Message de confirmation -->
+          <h2 class="success-title">Photo bien reçue&nbsp;!</h2>
+          <div class="success-divider">
+            <span class="success-divider__line"></span>
+            <span class="success-divider__gem">✦</span>
+            <span class="success-divider__line"></span>
+          </div>
+          <p class="success-text" id="successText">
+            Merci pour ce souvenir précieux.<br>
+            Soufiane et Salma seront ravis de le découvrir.
+          </p>
+
+          <!-- Bouton télécharger sur le téléphone -->
+          <button class="btn btn--download" id="btnDownload" onclick="saveToPhone()" style="margin-top:1.5rem;">
+            <span class="btn__icon">⬇️</span>
+            Sauvegarder sur mon téléphone
+          </button>
+
+          <!-- Nouvelle photo -->
+          <button class="btn btn--ghost" onclick="resetAll()" style="margin-top:0.5rem;">
+            <span class="btn__icon">📷</span>
+            Ajouter une autre photo
+          </button>
+        </div>
+      </div>
+
+    </div><!-- /.card -->
+
+    <footer class="page-footer">
+      <!-- [EDIT] -->
+      <p class="footer-text">Soufiane &amp; Salma · 23 octobre 2026</p>
+    </footer>
+
+  </main>
+
+  <script>
+  /* ═══════════════════════════════════════════════════════
+     CONFIGURATION
+     ═══════════════════════════════════════════════════════
+     [EDIT] Collez l'URL de votre Apps Script (Code-livre-photos.gs)
+     → script.google.com → Déployer → Application Web → /exec   */
+  const CONFIG = {
+    API_URL:    'https://script.google.com/macros/s/AKfycbw_fBZ1FmpvAl8IyXZ_7nsrMrGquVlUuGXY-YfQ7GBac0sI7dRHFLtJVGGWi5d7B-pUeg/exec', // ⚠️ À CHANGER
+    MAX_WIDTH:  1400,   // [EDIT] Largeur max de la photo compressée (px)
+    QUALITY:    0.85,   // [EDIT] Qualité JPEG (0.0–1.0)
+    MAX_MB:     20      // [EDIT] Taille max du fichier original (Mo)
+  };
+
+  /* ═══════════════════════════════════════════════════════
+     ÉTAT
+     ═══════════════════════════════════════════════════════ */
+  const state = {
+    userName:      '',
+    userRelation:  '',
+    originalFile:  null,   // fichier brut sélectionné
+    compressedBlob: null,  // blob JPEG compressé
+    previewURL:    null,   // object URL pour l'aperçu
+    sendToSelf:    false
+  };
+
+  /* ═══════════════════════════════════════════════════════
+     UTILITAIRES
+     ═══════════════════════════════════════════════════════ */
+  function showAlert(msg) {
+    const b = document.getElementById('alertBox');
+    b.textContent = msg;
+    b.classList.add('visible');
+    setTimeout(() => b.classList.remove('visible'), 7000);
+  }
+  function hideAlert() { document.getElementById('alertBox').classList.remove('visible'); }
+
+  function showStep(id) {
+    document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    document.getElementById('loadingState').classList.remove('visible');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function formatSize(bytes) {
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' Ko';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' Mo';
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     ÉTAPE 1 — Validation prénom
+     ═══════════════════════════════════════════════════════ */
+  function goToPhoto() {
+    state.userName    = document.getElementById('nameInput').value.trim();
+    state.userRelation = document.getElementById('relationInput').value.trim();
+    if (!state.userName) {
+      document.getElementById('nameInput').classList.add('error');
+      showAlert('Veuillez entrer votre prénom.');
+      document.getElementById('nameInput').focus();
+      return;
+    }
+    document.getElementById('nameInput').classList.remove('error');
+    hideAlert();
+    showStep('step2');
+  }
+
+  function backToStep1() { showStep('step1'); }
+
+  /* ═══════════════════════════════════════════════════════
+     ÉTAPE 2 — Sélection / capture photo
+     ═══════════════════════════════════════════════════════ */
+
+  /* Écoute les deux inputs fichier */
+  ['cameraInput', 'galleryInput'].forEach(id => {
+    document.getElementById(id).addEventListener('change', function () {
+      if (this.files && this.files[0]) handleFile(this.files[0]);
+    });
+  });
+
+  /* Drag & drop (desktop) */
+  const dropZone = document.getElementById('dropZone');
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--bordeaux)'; });
+  dropZone.addEventListener('dragleave', ()  => { dropZone.style.borderColor = ''; });
+  dropZone.addEventListener('drop',      e  => {
+    e.preventDefault();
+    dropZone.style.borderColor = '';
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+
+  async function handleFile(file) {
+    hideAlert();
+
+    /* Vérification type */
+    if (!file.type.startsWith('image/')) {
+      showAlert('Ce fichier n\'est pas une image. Veuillez choisir une photo (JPG, PNG, HEIC…).');
+      return;
+    }
+
+    /* Vérification taille brute */
+    if (file.size > CONFIG.MAX_MB * 1024 * 1024) {
+      showAlert(`L'image est trop volumineuse (max ${CONFIG.MAX_MB} Mo). Veuillez en choisir une autre.`);
+      return;
+    }
+
+    state.originalFile = file;
+
+    /* Passer à l'étape 3 tout de suite avec aperçu temporaire */
+    const tempURL = URL.createObjectURL(file);
+    showPreview(tempURL, file.name, file.size, '…compression…');
+    showStep('step3');
+
+    /* Compression en tâche de fond */
+    try {
+      const compressed = await compressImage(file, CONFIG.MAX_WIDTH, CONFIG.QUALITY);
+      state.compressedBlob = compressed;
+
+      /* Libérer l'ancienne URL et créer la nouvelle */
+      if (state.previewURL) URL.revokeObjectURL(state.previewURL);
+      state.previewURL = URL.createObjectURL(compressed);
+
+      /* Mettre à jour l'aperçu */
+      document.getElementById('previewImg').src = state.previewURL;
+      document.getElementById('metaSize').textContent = formatSize(compressed.size);
+    } catch (e) {
+      /* Fallback : utiliser le fichier original */
+      state.compressedBlob = file;
+      state.previewURL = tempURL;
+      document.getElementById('metaSize').textContent = formatSize(file.size);
+    }
+  }
+
+  function showPreview(url, name, size, sizeLabel) {
+    document.getElementById('previewImg').src = url;
+    document.getElementById('metaName').textContent = name.replace(/\.[^.]+$/, '');
+    document.getElementById('metaSize').textContent = sizeLabel || formatSize(size);
+    document.getElementById('previewBadge').textContent = state.userName ? `📷 ${state.userName}` : 'Aperçu';
+    /* Miniature succès (mise à jour après envoi) */
+    document.getElementById('successThumb').src = url;
+  }
+
+  function changePhoto() {
+    /* Réinitialiser les inputs pour permettre de re-sélectionner le même fichier */
+    ['cameraInput', 'galleryInput'].forEach(id => {
+      const el = document.getElementById(id);
+      el.value = '';
+    });
+    showStep('step2');
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     COMPRESSION IMAGE (Canvas)
+     ═══════════════════════════════════════════════════════
+     Redimensionne à MAX_WIDTH et encode en JPEG QUALITY
+     Résultat typique : photo 5 Mo → 300–600 Ko         */
+  function compressImage(file, maxWidth, quality) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let w = img.width, h = img.height;
+
+        /* Redimensionnement proportionnel */
+        if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
+
+        const canvas = document.createElement('canvas');
+        canvas.width  = w;
+        canvas.height = h;
+
+        const ctx = canvas.getContext('2d');
+        /* Fond blanc (évite les transparences PNG → JPEG) */
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+
+        canvas.toBlob(blob => {
+          if (blob) resolve(blob);
+          else      reject(new Error('Compression échouée'));
+        }, 'image/jpeg', quality);
+      };
+
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Lecture image échouée')); };
+      img.src = url;
+    });
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     TOGGLE EMAIL
+     ═══════════════════════════════════════════════════════ */
+  function toggleEmail(checked) {
+    state.sendToSelf = checked;
+    document.getElementById('emailConditional').classList.toggle('visible', checked);
+    if (checked) {
+      setTimeout(() => document.getElementById('emailInput').focus(), 400);
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     BLOB → BASE64
+     ═══════════════════════════════════════════════════════ */
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result.split(',')[1]);
+      reader.onerror   = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     ENVOI VERS GOOGLE DRIVE (via Apps Script)
+     ═══════════════════════════════════════════════════════
+     base64 → JSON → fetch no-cors → Apps Script → Drive
+     Timeout 30s, retry automatique 1 fois si échec réseau  */
+  async function sendPhoto() {
+    if (!state.compressedBlob) {
+      showAlert('Aucune photo sélectionnée.');
+      return;
+    }
+
+    const emailVal = state.sendToSelf ? document.getElementById('emailInput').value.trim() : '';
+    if (state.sendToSelf && !emailVal) {
+      document.getElementById('emailInput').classList.add('error');
+      showAlert('Veuillez entrer votre adresse email pour recevoir la photo.');
+      document.getElementById('emailInput').focus();
+      return;
+    }
+    if (emailVal) document.getElementById('emailInput').classList.remove('error');
+
+    /* Passer en mode chargement */
+    document.getElementById('step3').classList.remove('active');
+    document.getElementById('loadingState').classList.add('visible');
+    document.getElementById('loadingText').textContent = 'Préparation de la photo…';
+
+    /* Nom de fichier : timestamp_prenom_relation.jpg */
+    const safe     = v => v.replace(/[^a-zA-Z0-9À-öø-ÿ]/g, '_').slice(0, 40);
+    const namePart = safe(state.userName);
+    const relPart  = state.userRelation ? '_' + safe(state.userRelation) : '';
+    const fileName = `${Date.now()}_${namePart}${relPart}.jpg`;
+    const caption  = document.getElementById('captionInput').value.trim();
+
+    /* ── Helper : fetch avec timeout ── */
+    function fetchWithTimeout(url, options, ms = 45000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), ms);
+      return fetch(url, { ...options, signal: controller.signal })
+        .finally(() => clearTimeout(timer));
+    }
+
+    /* ── Helper : re-compresser si le blob est trop grand (>2 Mo) ── */
+    async function ensureSize(blob) {
+      if (blob.size <= 2 * 1024 * 1024) return blob;
+      document.getElementById('loadingText').textContent = 'Optimisation de la taille…';
+      /* Nouvelle compression plus agressive */
+      return new Promise(resolve => {
+        const img = new Image();
+        const url = URL.createObjectURL(blob);
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          let w = img.width, h = img.height;
+          const maxW = 1000;
+          if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          canvas.toBlob(b => resolve(b || blob), 'image/jpeg', 0.70);
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); resolve(blob); };
+        img.src = url;
+      });
+    }
+
+    try {
+      document.getElementById('loadingText').textContent = 'Encodage de la photo…';
+
+      /* Réduire si nécessaire */
+      const blobToSend = await ensureSize(state.compressedBlob);
+      const base64 = await blobToBase64(blobToSend);
+
+      document.getElementById('loadingText').textContent = 'Envoi vers Google Drive…';
+
+      const payload = {
+        photo:      base64,
+        mimeType:   'image/jpeg',
+        filename:   fileName,
+        name:       state.userName,
+        relation:   state.userRelation,
+        caption:    caption,
+        sendToSelf: state.sendToSelf,
+        email:      emailVal
+      };
+
+      const fetchOptions = {
+        method:  'POST',
+        mode:    'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body:    JSON.stringify(payload)
+      };
+
+      /* 1er essai */
+      try {
+        await fetchWithTimeout(CONFIG.API_URL, fetchOptions, 45000);
+      } catch (e1) {
+        if (e1.name === 'AbortError') {
+          /* Timeout → on réessaie une fois */
+          document.getElementById('loadingText').textContent = 'Reconnexion…';
+          await new Promise(r => setTimeout(r, 1500));
+          await fetchWithTimeout(CONFIG.API_URL, fetchOptions, 45000);
+        } else {
+          throw e1;
+        }
+      }
+
+      /* ── Succès ── */
+      document.getElementById('successThumb').src = state.previewURL || '';
+
+      /* Stocker le blob pour le téléchargement */
+      state.lastSentBlob = blobToSend;
+      state.lastFileName = fileName;
+
+      /* Message personnalisé si l'invité reçoit aussi la photo */
+      if (state.sendToSelf && emailVal) {
+        document.getElementById('successText').innerHTML =
+          `Merci pour ce souvenir précieux.<br>
+           Soufiane et Salma seront ravis de le découvrir.<br><br>
+           <span style="color:var(--bordeaux);font-size:.85em;">📩 La photo a été envoyée à ${emailVal}</span>`;
+      } else {
+        document.getElementById('successText').innerHTML =
+          `Merci pour ce souvenir précieux.<br>
+           Soufiane et Salma seront ravis de le découvrir.`;
+      }
+
+      document.getElementById('loadingState').classList.remove('visible');
+      showStep('step4');
+
+    } catch (err) {
+      console.error('Erreur envoi photo :', err);
+      document.getElementById('loadingState').classList.remove('visible');
+      showStep('step3');
+      const msg = err.name === 'AbortError'
+        ? 'La connexion a pris trop de temps. Vérifiez votre réseau et réessayez.'
+        : 'Erreur lors de l\'envoi. Vérifiez votre connexion et réessayez.';
+      showAlert(msg);
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     SAUVEGARDER SUR LE TÉLÉPHONE
+     ═══════════════════════════════════════════════════════
+     Télécharge la photo compressée directement sur l'appareil */
+  function saveToPhone() {
+    const blob = state.lastSentBlob || state.compressedBlob;
+    if (!blob) { showAlert('Aucune photo disponible.'); return; }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = state.lastFileName || `souvenir_mariage_${state.userName || 'photo'}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+    /* Feedback visuel */
+    const btn = document.getElementById('btnDownload');
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<span class="btn__icon">✅</span> Photo sauvegardée !';
+    btn.disabled = true;
+    setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 3000);
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     RÉINITIALISER (ajouter une autre photo)
+     ═══════════════════════════════════════════════════════ */
+  function resetAll() {
+    /* Réinitialiser l'état */
+    state.originalFile   = null;
+    state.compressedBlob = null;
+    state.lastSentBlob   = null;
+    state.lastFileName   = null;
+    if (state.previewURL) { URL.revokeObjectURL(state.previewURL); state.previewURL = null; }
+    state.sendToSelf = false;
+
+    /* Réinitialiser les champs */
+    ['captionInput', 'emailInput'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    document.getElementById('sendToggle').checked = false;
+    document.getElementById('emailConditional').classList.remove('visible');
+    document.getElementById('successText').innerHTML =
+      `Merci pour ce souvenir précieux.<br>Soufiane et Salma seront ravis de le découvrir.`;
+
+    /* Réinitialiser les inputs fichier */
+    ['cameraInput', 'galleryInput'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+
+    showStep('step2');
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     INTERACTIONS CLAVIER
+     ═══════════════════════════════════════════════════════ */
+  document.getElementById('nameInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); goToPhoto(); }
+  });
+  document.getElementById('nameInput').addEventListener('input', () => {
+    document.getElementById('nameInput').classList.remove('error');
+  });
+  </script>
+
+</body>
+</html>
