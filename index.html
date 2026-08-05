@@ -2,164 +2,218 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#F9F7F2" />
-  <title>Photos Souvenirs — Soufiane & Salma</title>
-  
+  <meta name="description" content="Livre de souvenirs photo et vidéo du mariage de Salma & Soufiane." />
+  <title>Livre de Souvenirs — Salma &amp; Soufiane</title>
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Montserrat:wght@300;400;500&display=swap" rel="stylesheet" />
-  
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet" />
+
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
 
-  <main class="page">
-    <header class="page-header">
-      <span class="header__ornament">✦ Mariage ✦</span>
-      <h1 class="header__title">Photos<br><em>Souvenirs</em></h1>
-      <p class="header__sub">Soufiane &amp; Salma · 23 Oct. 2026</p>
+<!-- Annonces accessibles (lecteurs d'écran) -->
+<p id="srStatus" class="sr-only" role="status" aria-live="polite"></p>
+
+<!-- Bandeau d'alerte global -->
+<div class="toast" id="toast" role="alert" aria-live="assertive" hidden></div>
+
+
+<!-- ══════════════════════════════════════════════════
+     ÉCRAN 1 — ACCUEIL
+     ══════════════════════════════════════════════════ -->
+<main class="screen screen--home is-active" id="screenHome">
+  <div class="home">
+    <header class="home__header">
+      <span class="home__ornament" aria-hidden="true">✦&nbsp;&nbsp;Mariage&nbsp;&nbsp;✦</span>
+      <h1 class="home__title">Livre de<br /><em>Souvenirs</em></h1>
+      <p class="home__sub">Salma &amp; Soufiane · 23 octobre 2026</p>
     </header>
 
-    <div class="card">
-      <div class="alert" id="alertBox" role="alert"></div>
+    <p class="home__intro">
+      Laissez-nous une photo ou une petite vidéo.
+      Elle rejoindra notre album privé.
+    </p>
 
-      <!-- ÉTAPE 1 : IDENTITÉ -->
-      <div class="step active" id="step1">
-        <div class="step-indicator">
-          <div class="step-dot current"></div>
-          <div class="step-dot"></div>
-          <div class="step-dot"></div>
-          <div class="step-dot"></div>
-        </div>
-        <span class="step-label">Étape 1 / 3</span>
-        <h2 class="step-title">Qui êtes-vous&nbsp;?</h2>
-        <p class="step-desc">
-          Offrez un souvenir photo ou vidéo aux mariés. Il sera conservé précieusement dans leur album digital.
-        </p>
-
-        <div class="field">
-          <label class="field__label" for="nameInput">Votre prénom</label>
-          <input class="field__input" type="text" id="nameInput" placeholder="Ex : Sophie" maxlength="50" autocomplete="given-name" />
-        </div>
-        <div class="field">
-          <label class="field__label" for="relationInput">
-            Vous êtes… <span style="opacity:.5;font-weight:300;text-transform:none;font-size:.8em">(optionnel)</span>
-          </label>
-          <input class="field__input" type="text" id="relationInput" placeholder="Ex : Ami de Soufiane, Cousine..." maxlength="80" />
-        </div>
-
-        <button class="btn btn--primary" id="btnGoStep2">
-          <span class="btn__icon">📷</span> Suivant
-        </button>
-      </div>
-
-      <!-- ÉTAPE 2 : CAPTURE -->
-      <div class="step" id="step2">
-        <!-- CAMERA CONTAINER (Full Screen) -->
-        <div class="camera-container" id="cameraContainer">
-          <video id="cameraFeed" class="camera-feed" autoplay playsinline muted></video>
-          
-          <!-- UI Flottante par dessus la caméra -->
-          <div class="camera-ui">
-            <!-- Haut -->
-            <div class="camera-ui__top">
-              <button class="icon-btn" id="btnBackToStep1">✕</button>
-              <button class="icon-btn" id="btnSwitchCamera">🔄</button>
-            </div>
-
-            <!-- Bas : Bouton de capture -->
-            <div class="camera-ui__bottom">
-              <div class="snap-capture-wrap">
-                <button class="snap-capture-btn" id="btnSnapCapture"></button>
-              </div>
-              <p class="snap-hint shadow-text">Tap pour photo • Maintenir pour vidéo</p>
-              <div id="videoTimer" class="snap-timer">00:00</div>
-            </div>
-          </div>
-
-          <!-- Fallback si refus de caméra -->
-          <div id="cameraFallback" style="display:none; position:absolute; inset:0; background:var(--cream-dark); flex-direction:column; align-items:center; justify-content:center; text-align:center; padding: 2rem; z-index: 20;">
-            <p style="font-size: 0.8rem; margin-bottom: 1rem; color: var(--muted)">Caméra indisponible ou refusée.</p>
-            <input type="file" accept="image/*,video/*" id="galleryInput" style="display:none" />
-            <button class="btn btn--outline" onclick="document.getElementById('galleryInput').click()">
-              <span class="btn__icon">🖼️</span> Parcourir
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- ÉTAPE 3 : VÉRIFICATION ET ENVOI -->
-      <div class="step" id="step3">
-        <div class="preview-wrap" id="previewWrap">
-          <img class="preview-img" id="previewImg" />
-          <video class="preview-video" id="previewVideo" controls playsinline></video>
-          <div id="previewOverlay" class="camera-overlay"></div>
-          
-          <!-- Haut -->
-          <div class="camera-ui__top" style="position: absolute; top: max(2rem, env(safe-area-inset-top)); left: 1rem; right: 1rem; z-index: 20;">
-            <button class="icon-btn" id="btnChangeMedia">✕</button>
-          </div>
-
-          <!-- Texte centré -->
-          <input class="snap-caption" type="text" id="captionInput" placeholder="Ajouter une légende..." maxlength="120" />
-          
-          <!-- Bas -->
-          <div class="snap-preview-bottom">
-            <!-- Carousel filtres placé juste au-dessus des actions -->
-            <div class="filter-carousel" id="filterCarousel" style="margin-bottom: 1.5rem;">
-              <!-- Injecté via JS -->
-            </div>
-            
-            <div class="snap-action-bar">
-              <!-- Enregistrer -->
-              <button class="icon-btn-circle" id="btnShareNative" title="Enregistrer / Partager">
-                ⬇️
-              </button>
-              
-              <!-- Envoyer -->
-              <button class="snap-send-btn" id="btnSendToDrive">
-                Envoyer à <span class="send-arrow">➔</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Progress -->
-          <div class="upload-progress" id="uploadProgress" style="position: absolute; bottom: 0; left: 0; width: 100%; z-index: 30;">
-            <div class="upload-progress__bar" style="margin-bottom:0;"><div class="upload-progress__fill" id="progressFill"></div></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- CHARGEMENT -->
-      <div class="loading-state" id="loadingState">
-        <div class="spinner"></div>
-        <p class="loading-text" id="loadingText">Traitement en cours…</p>
-      </div>
-
-      <!-- ÉTAPE 4 : SUCCÈS -->
-      <div class="step" id="step4">
-        <div class="success-state">
-          <img class="success-thumb" id="successThumb" alt="" style="display:none" />
-          <span class="success-ornament">✦</span>
-          <h2 class="success-title">Souvenir bien reçu&nbsp;!</h2>
-          <div class="success-divider">
-            <span class="success-divider__line"></span><span class="success-divider__gem">✦</span><span class="success-divider__line"></span>
-          </div>
-          <p class="success-text" id="successText">Merci pour ce souvenir précieux.<br>Soufiane et Salma seront ravis de le découvrir.</p>
-          <button class="btn btn--ghost" id="btnResetAll" style="margin-top:1.5rem;">
-            <span class="btn__icon">📷</span> Ajouter un autre souvenir
-          </button>
-        </div>
-      </div>
-
+    <div class="field">
+      <label class="field__label" for="nameInput">Votre prénom <span class="field__opt">(facultatif)</span></label>
+      <input class="field__input" type="text" id="nameInput" placeholder="Ex : Sophie" maxlength="50" autocomplete="given-name" enterkeyhint="next" />
     </div>
 
-    <footer class="page-footer">
-      <p class="footer-text">Soufiane &amp; Salma · 23 octobre 2026</p>
-    </footer>
-  </main>
+    <div class="field">
+      <label class="field__label" for="messageInput">Un petit mot <span class="field__opt">(facultatif)</span></label>
+      <input class="field__input" type="text" id="messageInput" placeholder="Un moment, une pensée…" maxlength="200" enterkeyhint="go" />
+    </div>
 
-  <script src="js/app.js"></script>
+    <button class="btn btn--primary" id="btnStart" type="button">
+      <span class="btn__icon" aria-hidden="true">📷</span> Créer mon souvenir
+    </button>
+
+    <p class="home__privacy">
+      La caméra et le micro servent uniquement à créer ce souvenir.
+      Vous pouvez l'enregistrer sur votre téléphone sans l'envoyer.
+      Rien n'est publié automatiquement&nbsp;: les souvenirs envoyés restent privés,
+      conservés par les mariés.
+    </p>
+
+    <footer class="home__footer">
+      <p>Salma &amp; Soufiane · 23.10.2026</p>
+    </footer>
+  </div>
+</main>
+
+
+<!-- ══════════════════════════════════════════════════
+     ÉCRAN 2 — CAPTURE PLEIN ÉCRAN
+     ══════════════════════════════════════════════════ -->
+<section class="screen screen--stage" id="screenCapture" aria-label="Prise de vue">
+
+  <video id="cameraFeed" class="stage__media" autoplay playsinline muted></video>
+
+  <!-- Voile de sécurité lisibilité haut / bas -->
+  <div class="stage__scrim stage__scrim--top" aria-hidden="true"></div>
+  <div class="stage__scrim stage__scrim--bottom" aria-hidden="true"></div>
+
+  <!-- Barre haute -->
+  <div class="stage__top">
+    <button class="iconbtn" id="btnCaptureBack" type="button" aria-label="Revenir à l'accueil">
+      <span aria-hidden="true">✕</span>
+    </button>
+
+    <div class="rec-pill" id="recPill" hidden>
+      <span class="rec-pill__dot" aria-hidden="true"></span>
+      <span id="recTimer" aria-live="off">0:00</span>
+    </div>
+
+    <div class="stage__top-right">
+      <button class="iconbtn" id="btnTorch" type="button" aria-label="Activer la lampe" hidden>
+        <span aria-hidden="true">🔦</span>
+      </button>
+      <button class="iconbtn" id="btnSwitchCamera" type="button" aria-label="Changer de caméra">
+        <span aria-hidden="true">🔄</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Barre basse -->
+  <div class="stage__bottom">
+    <div class="modeswitch" role="radiogroup" aria-label="Mode de capture">
+      <button class="modeswitch__opt is-active" id="modePhoto" type="button" role="radio" aria-checked="true">Photo</button>
+      <button class="modeswitch__opt" id="modeVideo" type="button" role="radio" aria-checked="false">Vidéo</button>
+    </div>
+
+    <div class="shutter-row">
+      <button class="shutter" id="btnShutter" type="button"
+              aria-label="Prendre une photo. Maintenez pour enregistrer une vidéo.">
+        <svg class="shutter__ring" viewBox="0 0 100 100" aria-hidden="true">
+          <circle class="shutter__track" cx="50" cy="50" r="45" />
+          <circle class="shutter__progress" id="shutterProgress" cx="50" cy="50" r="45" />
+        </svg>
+        <span class="shutter__core" aria-hidden="true"></span>
+      </button>
+
+      <button class="ghostbtn" id="btnGallery" type="button" aria-label="Choisir un fichier depuis la galerie">
+        <span aria-hidden="true">🖼️</span>
+      </button>
+    </div>
+
+    <p class="stage__hint" id="captureHint">Touchez pour une photo · Maintenez pour une vidéo</p>
+  </div>
+
+  <input type="file" accept="image/*,video/*" id="galleryInput" class="sr-only" />
+
+  <!-- Écran d'erreur caméra -->
+  <div class="stage__blocker" id="cameraBlocker" hidden>
+    <p class="stage__blocker-title" id="cameraBlockerTitle">Caméra indisponible</p>
+    <p class="stage__blocker-text" id="cameraBlockerText">
+      Autorisez l'accès à votre caméra pour créer votre souvenir.
+    </p>
+    <button class="btn btn--light" id="btnRetryCamera" type="button">Réessayer</button>
+    <button class="btn btn--ghost-light" id="btnBlockerGallery" type="button">Choisir un fichier</button>
+  </div>
+</section>
+
+
+<!-- ══════════════════════════════════════════════════
+     ÉCRAN 3 — APERÇU & FILTRES
+     ══════════════════════════════════════════════════ -->
+<section class="screen screen--stage" id="screenPreview" aria-label="Aperçu du souvenir">
+
+  <!-- La scène adopte exactement le format du média : aucun filtre déformé -->
+  <div class="mediastage" id="mediaStage">
+    <div class="mediastage__box" id="mediaBox">
+      <img class="mediastage__media" id="previewImg" alt="Aperçu de votre photo" hidden />
+      <video class="mediastage__media" id="previewVideo" playsinline controls hidden></video>
+      <img class="mediastage__filter" id="filterOverlay" alt="" aria-hidden="true" hidden />
+    </div>
+  </div>
+
+  <div class="stage__scrim stage__scrim--top" aria-hidden="true"></div>
+  <div class="stage__scrim stage__scrim--bottom stage__scrim--tall" aria-hidden="true"></div>
+
+  <div class="stage__top">
+    <button class="iconbtn" id="btnRetake" type="button" aria-label="Recommencer la prise de vue">
+      <span aria-hidden="true">←</span>
+    </button>
+    <span class="filter-name" id="filterName">Aucun filtre</span>
+    <span class="stage__top-right" aria-hidden="true"></span>
+  </div>
+
+  <!-- Info honnête sur la limite vidéo (affichée seulement si nécessaire) -->
+  <p class="notice" id="videoFilterNotice" hidden></p>
+
+  <div class="stage__bottom stage__bottom--preview">
+
+    <div class="filter-strip" id="filterStrip" role="listbox" aria-label="Choix du filtre">
+      <!-- injecté par app.js -->
+    </div>
+
+    <label class="sr-only" for="captionInput">Légende de votre souvenir</label>
+    <input class="caption" type="text" id="captionInput" placeholder="Un moment, une pensée…" maxlength="200" />
+
+    <div class="actionbar">
+      <button class="btn btn--light btn--half" id="btnSaveShare" type="button">
+        <span class="btn__icon" aria-hidden="true">⬇︎</span> Enregistrer ou partager
+      </button>
+      <button class="btn btn--primary btn--half" id="btnSend" type="button">
+        <span class="btn__icon" aria-hidden="true">✉︎</span> Envoyer aux mariés
+      </button>
+    </div>
+  </div>
+
+  <!-- Overlay de traitement / envoi -->
+  <div class="working" id="working" hidden>
+    <div class="working__box">
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="working__text" id="workingText">Préparation de votre souvenir…</p>
+      <div class="working__bar"><div class="working__fill" id="workingFill"></div></div>
+      <button class="btn btn--ghost-light" id="btnWorkingCancel" type="button" hidden>Passer cette étape</button>
+    </div>
+  </div>
+</section>
+
+
+<!-- ══════════════════════════════════════════════════
+     ÉCRAN 4 — CONFIRMATION
+     ══════════════════════════════════════════════════ -->
+<main class="screen screen--home" id="screenDone">
+  <div class="home home--center">
+    <span class="done__ornament" aria-hidden="true">✦</span>
+    <h2 class="done__title">Souvenir bien reçu</h2>
+    <div class="done__rule" aria-hidden="true"><i></i><span>✦</span><i></i></div>
+    <p class="done__text" id="doneText">
+      Merci&nbsp;! Votre souvenir a bien été envoyé aux mariés.
+    </p>
+    <button class="btn btn--primary" id="btnAnother" type="button">
+      <span class="btn__icon" aria-hidden="true">📷</span> Ajouter un autre souvenir
+    </button>
+    <button class="btn btn--ghost" id="btnDoneHome" type="button">Retour à l'accueil</button>
+  </div>
+</main>
+
+<script src="js/app.js" defer></script>
 </body>
 </html>

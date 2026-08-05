@@ -1,5 +1,6 @@
 {
-  "version": 1,
+  "version": 2,
+  "note": "Ajouter un filtre ici suffit : aucune modification de js/app.js n'est nécessaire. Les champs portrait / landscape / thumbnail sont facultatifs ; sans eux, le chemin filters/portrait/filter-<id>.png est utilisé.",
   "filters": [
     {
       "id": "none",
@@ -17,7 +18,11 @@
       "active": true,
       "order": 1,
       "mediaTypes": ["photo", "video"],
-      "orientations": ["portrait"]
+      "orientations": ["portrait"],
+      "portrait": "filters/portrait/filter-ss-floral-burgundy-01.png",
+      "thumbnail": "",
+      "fit": "cover",
+      "safeArea": { "top": 0.12, "bottom": 0.18, "left": 0.08, "right": 0.08 }
     },
     {
       "id": "ss-ivory-gold-02",
@@ -26,7 +31,11 @@
       "active": true,
       "order": 2,
       "mediaTypes": ["photo", "video"],
-      "orientations": ["portrait"]
+      "orientations": ["portrait"],
+      "portrait": "filters/portrait/filter-ss-ivory-gold-02.png",
+      "thumbnail": "",
+      "fit": "cover",
+      "safeArea": { "top": 0.12, "bottom": 0.18, "left": 0.08, "right": 0.08 }
     },
     {
       "id": "salma-soufiane-gold-03",
@@ -35,7 +44,11 @@
       "active": true,
       "order": 3,
       "mediaTypes": ["photo", "video"],
-      "orientations": ["portrait"]
+      "orientations": ["portrait"],
+      "portrait": "filters/portrait/filter-salma-soufiane-gold-03.png",
+      "thumbnail": "",
+      "fit": "cover",
+      "safeArea": { "top": 0.12, "bottom": 0.18, "left": 0.08, "right": 0.08 }
     },
     {
       "id": "salma-soufiane-gold-04",
@@ -44,7 +57,11 @@
       "active": true,
       "order": 4,
       "mediaTypes": ["photo", "video"],
-      "orientations": ["portrait"]
+      "orientations": ["portrait"],
+      "portrait": "filters/portrait/filter-salma-soufiane-gold-04.png",
+      "thumbnail": "",
+      "fit": "cover",
+      "safeArea": { "top": 0.12, "bottom": 0.18, "left": 0.08, "right": 0.08 }
     },
     {
       "id": "salma-soufiane-ivory-05",
@@ -53,7 +70,11 @@
       "active": true,
       "order": 5,
       "mediaTypes": ["photo", "video"],
-      "orientations": ["portrait"]
+      "orientations": ["portrait"],
+      "portrait": "filters/portrait/filter-salma-soufiane-ivory-05.png",
+      "thumbnail": "",
+      "fit": "cover",
+      "safeArea": { "top": 0.12, "bottom": 0.18, "left": 0.08, "right": 0.08 }
     }
   ]
 }

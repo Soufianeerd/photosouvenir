@@ -1,0 +1,62 @@
+# Site statique : aucun build, aucune dépendance.
+# Le dossier publié est la racine du dépôt.
+
+[build]
+  publish = "."
+  command = ""
+
+# HTML : jamais mis en cache, pour éviter de servir une ancienne version
+# après un déploiement.
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# La configuration des filtres doit pouvoir être modifiée sans purge de cache.
+[[headers]]
+  for = "/filters/filters.json"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# CSS et JS : revalidation courte, le site évolue encore.
+[[headers]]
+  for = "/css/*"
+  [headers.values]
+    Cache-Control = "public, max-age=300, must-revalidate"
+
+[[headers]]
+  for = "/js/*"
+  [headers.values]
+    Cache-Control = "public, max-age=300, must-revalidate"
+
+# Images de filtres : lourdes et stables, cache long.
+[[headers]]
+  for = "/filters/portrait/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/filters/landscape/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/filters/thumbnails/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# En-têtes de sécurité.
+# Permissions-Policy autorise explicitement caméra et micro sur le site lui-même :
+# sans cela, certains navigateurs bloquent getUserMedia.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "SAMEORIGIN"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(self), microphone=(self), geolocation=()"
