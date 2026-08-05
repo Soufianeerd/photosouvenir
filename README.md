@@ -61,7 +61,10 @@ récent, un Android d'entrée de gamme.
 | Filtres composés à la volée | 12 Mo d'images plein format remplacés par ~480 Ko de pièces, et un cadre qui épouse enfin tous les bords |
 | Préchargement des filtres | Pièces et polices récupérées aux moments creux pendant que l'invité cadre |
 | Préchauffage du canvas | La vidéo démarre sur une image, jamais sur du noir |
-| Composition anticipée | Le filtre photo est appliqué dès la sélection : « Enregistrer » et « Envoyer » sont instantanés |
+| Fichier prêt avant le toucher | La photo finale est composée dès le choix du filtre : `navigator.share()` peut alors être appelé sans aucune attente, seule façon d'ouvrir la feuille de partage sur iOS |
+| Envoi en arrière-plan | L'invité voit « Merci ! » en moins de 100 ms ; le transfert se termine seul, avec reprise automatique |
+| Photo 2048 px / qualité 0,88 | ~600 Ko au lieu de 3 Mo, sans différence visible : l'envoi est cinq fois plus court |
+| Vidéo 720p à 2,8 Mbit/s | Presque deux fois plus légère qu'à 4 Mbit/s, pour un rendu identique sur un écran de téléphone |
 | Capture au format écran | Aucun pixel jamais affiché n'est encodé ni envoyé |
 | Wake Lock | L'écran ne s'éteint pas pendant l'enregistrement |
 | `visualViewport` | Les commandes ne sont jamais rognées par la barre d'adresse iOS |
@@ -77,8 +80,44 @@ récent, un Android d'entrée de gamme.
    sélecteur *Photo / Vidéo* offre une alternative à l'appui prolongé.
 3. **Aperçu** — c'est ici, et seulement ici, que l'on choisit un filtre :
    par glissement horizontal sur le média ou via les vignettes.
-4. **Enregistrer ou partager**, et/ou **Envoyer aux mariés**. Les deux actions
-   sont indépendantes.
+4. **Enregistrer dans mes photos**, et/ou **Envoyer aux mariés**. Les deux
+   actions sont indépendantes, et aucune ne fait attendre.
+
+---
+
+## Enregistrer dans la galerie : ce qui est possible, et ce qui ne l'est pas
+
+**Aucune page web, sur aucun navigateur, ne peut écrire directement dans
+l'application Photos d'un iPhone.** Il n'existe pas d'API pour cela, et c'est
+délibéré côté Apple. Seule une vraie application installée depuis l'App Store
+en serait capable. Toute solution qui prétend le contraire passe en réalité
+par la feuille de partage.
+
+Le chemin officiel — et le plus court — est donc `navigator.share()`, qui
+ouvre la feuille native contenant « Enregistrer l'image », WhatsApp, Snapchat
+et Instagram. Un seul geste.
+
+Encore faut-il qu'elle s'ouvre. **iOS n'autorise `navigator.share()` que
+pendant l'activation utilisateur**, la brève fenêtre ouverte par le toucher.
+La version précédente composait la photo *avant* d'appeler `share()` : cette
+attente consommait l'activation, Safari refusait, et le repli téléchargeait le
+fichier — ce qui, sur iPhone, ouvre un onglet Safari sans rien enregistrer.
+C'était la cause exacte de l'impossibilité de partager vers Snapchat.
+
+Ce qui est en place aujourd'hui :
+
+- la photo finale est composée **dès que l'invité choisit son filtre**, en
+  silence, 400 ms après son geste ;
+- au toucher, `navigator.share()` est appelé **immédiatement**, sans le
+  moindre `await` — l'activation est intacte, la feuille s'ouvre ;
+- une vidéo demande un réencodage impossible à anticiper : le bouton annonce
+  franchement « Préparer l'enregistrement », puis devient « Enregistrer dans
+  mes photos » pour le second toucher ;
+- si le partage de fichiers n'existe pas (vieil Android, navigateur exotique),
+  la photo finale — filtre compris — remplace l'aperçu : un appui long dessus
+  propose « Ajouter aux photos », toujours sans quitter la page.
+
+Aucun chemin ne sort de l'application vers Safari.
 
 ---
 
@@ -286,27 +325,29 @@ Après déploiement, recharger en vidant le cache (ou en navigation privée) pou
 
 ## Limites techniques connues
 
-- **Progression d'envoi** : aucun pourcentage n'est affiché pendant l'envoi, et
-  c'est délibéré. Attacher un écouteur à `xhr.upload` rendrait la requête « non
+- **Envoi en arrière-plan** : l'invité est confirmé avant que le transfert ne
+  soit terminé. Le souvenir est écrit dans IndexedDB *avant* toute tentative
+  réseau, donc rien ne peut être perdu tant que l'invité revient sur la page —
+  la file repart seule au retour du réseau, au retour sur l'onglet, ou à la
+  visite suivante. Le seul cas de perte réelle : fermer la page dans la
+  seconde qui suit l'envoi **et** ne jamais revenir. L'écran de confirmation
+  dit toujours la vérité sur l'état du transfert.
+- **Progression d'envoi** : aucun pourcentage n'est affiché, et c'est
+  délibéré. Attacher un écouteur à `xhr.upload` rendrait la requête « non
   simple » au sens CORS et déclencherait un préflight `OPTIONS` que Google Apps
-  Script ne gère pas : le POST ne partirait jamais. La barre est donc
-  indéterminée, avec la taille réelle du fichier affichée, plutôt que faussement
-  chiffrée.
+  Script ne gère pas : le POST ne partirait jamais.
 - **Incrustation du filtre dans les vidéos** : elle repose sur
   `canvas.captureStream()` + `MediaRecorder` + `AudioContext`, toutes
   disponibles sur Safari iOS 15+. Le réencodage se fait en temps réel : une
   vidéo de 15 s demande environ 15 s de traitement, avec une barre de
-  progression et un bouton « Passer cette étape ». Si l'appareil ne le permet
-  pas, la vidéo d'origine est conservée et l'interface le dit explicitement.
-- **Interrompre** : deux interruptions bien distinctes, et deux libellés
-  distincts. « Passer cette étape » pendant l'incrustation du filtre conserve
-  la vidéo d'origine et poursuit l'envoi. « Annuler l'envoi » pendant l'envoi
-  interrompt la requête, retire le souvenir de la file d'attente et rend la
-  main à l'invité, qui retrouve son aperçu intact.
-- **Enregistrement dans la galerie iOS** : un site web ne peut pas écrire
-  directement dans l'application Photos. Le bouton ouvre la feuille de partage
-  native ; c'est l'invité qui choisit « Enregistrer la vidéo ». L'intitulé du
-  bouton dit donc « Enregistrer ou partager », et non « Enregistré ».
+  progression et un bouton « Annuler ». C'est la seule attente restante de
+  toute l'application, et elle est inhérente au navigateur. Si l'appareil ne
+  le permet pas, la vidéo d'origine est conservée et l'interface le dit.
+- **Interrompre** : un seul bouton, un seul mot — « Annuler ». Il annule
+  vraiment : l'opération s'arrête, rien n'est mis en cache, et l'invité
+  retrouve son aperçu exactement comme il l'avait laissé. L'ancien « Passer
+  cette étape » poursuivait l'action avec un fichier différent de celui
+  affiché à l'écran, ce qui n'avait aucun sens pour un invité.
 - **Formats très inhabituels** : le cadre s'adapte à tout format, mais sur un
   écran extrêmement allongé la gerbe florale occupe forcément une part plus
   faible de la hauteur. Le filtre « Or Fin », sans gerbe, reste identique

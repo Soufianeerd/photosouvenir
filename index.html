@@ -191,8 +191,11 @@
     <input class="caption" type="text" id="captionInput" placeholder="Un moment, une pensée…" maxlength="200" />
 
     <div class="actionbar">
+      <!-- Le libellé change selon que le fichier est déjà prêt ou non : sur
+           iPhone, la feuille de partage ne peut s'ouvrir que si aucune
+           préparation ne s'intercale entre le toucher et l'appel. -->
       <button class="btn btn--light btn--half" id="btnSaveShare" type="button">
-        <span class="btn__icon" aria-hidden="true">⬇︎</span> Enregistrer ou partager
+        <span class="btn__icon" aria-hidden="true">⬇︎</span><span id="saveShareLabel"> Enregistrer dans mes photos</span>
       </button>
       <button class="btn btn--primary btn--half" id="btnSend" type="button">
         <span class="btn__icon" aria-hidden="true">✉︎</span> Envoyer aux mariés
@@ -223,8 +226,12 @@
     <h2 class="done__title">Souvenir bien reçu</h2>
     <div class="done__rule" aria-hidden="true"><i></i><span>✦</span><i></i></div>
     <p class="done__text" id="doneText">
-      Merci&nbsp;! Votre souvenir a bien été envoyé aux mariés.
+      Merci&nbsp;! Votre souvenir rejoint l'album de Salma &amp; Soufiane.
     </p>
+
+    <!-- État réel du transfert, tenu à jour en arrière-plan : l'invité n'a
+         jamais à attendre, mais il n'est jamais trompé non plus. -->
+    <p class="done__status" id="doneStatus" role="status" aria-live="polite" hidden></p>
     <button class="btn btn--primary" id="btnAnother" type="button">
       <span class="btn__icon" aria-hidden="true">📷</span> Ajouter un autre souvenir
     </button>

@@ -30,24 +30,29 @@ const CONFIG = {
   CLIENT_MAX_VIDEO_BYTES: 23 * 1024 * 1024,
 
   /*
-   * Qualité vidéo : 4 Mbit/s en 720p, soit une image nettement plus nette
-   * qu'un débit bridé. Plutôt que de dégrader toutes les vidéos pour que
-   * le pire cas (60 s) tienne dans la limite, on surveille la taille
-   * pendant l'enregistrement et on arrête proprement au budget atteint.
-   * Une capture typique de 10 à 20 s pèse alors 5 à 10 Mo : bien plus
-   * rapide à envoyer que les 20 Mo de l'approche précédente.
+   * Poids des fichiers — c'est LE facteur qui décide de la durée d'envoi.
+   *
+   * 2,8 Mbit/s en 720p reste très propre sur un écran de téléphone, tout en
+   * divisant par presque deux le poids d'une vidéo par rapport aux 4 Mbit/s
+   * d'avant. La taille est surveillée pendant l'enregistrement : on s'arrête
+   * proprement au budget atteint plutôt que de dégrader toutes les vidéos
+   * pour absorber le pire cas.
    */
-  VIDEO_BITS_PER_SECOND: 4000000,
-  AUDIO_BITS_PER_SECOND: 128000,
-  RECORD_SIZE_BUDGET_BYTES: 20 * 1024 * 1024,
+  VIDEO_BITS_PER_SECOND: 2800000,
+  AUDIO_BITS_PER_SECOND: 96000,
+  RECORD_SIZE_BUDGET_BYTES: 18 * 1024 * 1024,
 
   /* Côté court du canvas d'enregistrement (720p portrait). */
   RECORD_SHORT_EDGE: 720,
   RECORD_MAX_LONG_EDGE: 1600,
 
-  /* Photo : on garde une vraie définition. */
-  PHOTO_MAX_LONG_EDGE: 3000,
-  JPEG_QUALITY: 0.94,
+  /*
+   * Photo : 2048 px de grand côté et une qualité de 0,88 donnent un fichier
+   * d'environ 600 Ko au lieu de 3 Mo, sans différence visible à l'écran ni
+   * sur un tirage 13 × 18. L'envoi passe de quarante secondes à quelques-unes.
+   */
+  PHOTO_MAX_LONG_EDGE: 2048,
+  JPEG_QUALITY: 0.88,
 
   UPLOAD_POLL_INTERVAL_MS: 1500,
   UPLOAD_TIMEOUT_MS: 240000
@@ -111,9 +116,10 @@ const state = {
   previewMuted: false,
   isBusy: false,
   isSent: false,
+  cancelled: false,       /* l'invité a touché « Annuler » */
   burnCancelled: false,   /* incrustation du filtre interrompue */
-  sendCancelled: false,   /* envoi interrompu par l'invité */
-  cancelMode: null,       /* null | 'skip' | 'cancel' */
+  shareFile: null,        /* fichier prêt à partager, sans aucune attente */
+  shareURL: null,         /* URL du repli « appui long » */
   activePoll: null,
   activeXhr: null
 };
@@ -168,6 +174,7 @@ const el = {
   videoFilterNotice: $('videoFilterNotice'),
   btnRetake: $('btnRetake'),
   btnSaveShare: $('btnSaveShare'),
+  saveShareLabel: $('saveShareLabel'),
   btnSend: $('btnSend'),
 
   working: $('working'),
@@ -177,7 +184,8 @@ const el = {
 
   btnAnother: $('btnAnother'),
   btnDoneHome: $('btnDoneHome'),
-  doneText: $('doneText')
+  doneText: $('doneText'),
+  doneStatus: $('doneStatus')
 };
 
 
@@ -1444,6 +1452,9 @@ function readVideoMetadata(file) {
 
 function setCapturedMedia(blob, type, width, height, duration) {
   revokePreviewURL();
+  revokeShareURL();
+  state.shareFile = null;
+  state.cancelled = false;
   state.mediaBlob = blob;
   state.mediaType = type;
   state.mediaWidth = width || 0;
@@ -1481,6 +1492,7 @@ function goToPreview() {
   el.captionInput.value = state.message;
   el.btnSend.disabled = false;
   el.btnSaveShare.disabled = false;
+  updateSaveButton();
 
   /* L'écran est affiché AVANT de choisir le filtre : le cadre est composé
      aux dimensions réelles de la boîte d'aperçu, or celles-ci valent zéro
@@ -1786,14 +1798,19 @@ let finalCache = { key: null, blob: null, burned: false };
 let speculativeTimer = null;
 function scheduleSpeculativeRender() {
   clearTimeout(speculativeTimer);
+
+  /* Le fichier prêt ne correspond plus au filtre affiché. */
+  if (!shareFileIsFresh()) { state.shareFile = null; updateSaveButton(); }
+
   if (state.mediaType !== 'photo' || !state.mediaBlob || state.isBusy) return;
 
   speculativeTimer = setTimeout(() => {
     if (state.isBusy || state.isSent) return;
-    const key = finalCacheKey();
-    if (finalCache.key === key && finalCache.blob) return;
-    buildFinalMedia(true).catch(() => {});
-  }, 450);
+    if (shareFileIsFresh()) return;
+    /* On va jusqu'au File, et pas seulement jusqu'au blob : c'est lui qu'il
+       faudra passer à navigator.share() sans la moindre attente. */
+    prepareShareFile().catch(() => {});
+  }, 400);
 }
 
 function finalCacheKey() {
@@ -1832,17 +1849,20 @@ async function buildFinalMedia(silent) {
     /* L'aperçu est mis en pause : deux vidéos qui lisent en même temps
        ralentissent le réencodage et sont interdites sur certains iPhone. */
     try { el.previewVideo.pause(); } catch (e) {}
-    setWorking(true, 'Incrustation du filtre dans la vidéo…', 0, 'skip');
+    setWorking(true, 'Incrustation du filtre dans la vidéo…', 0, true);
 
     const burned = await burnFilterIntoVideo(state.mediaBlob, filter, (p) => {
-      setWorking(true, 'Incrustation du filtre dans la vidéo…', p, 'skip');
+      setWorking(true, 'Incrustation du filtre dans la vidéo…', p, true);
     });
 
     if (burned) result = { blob: burned, filterBurned: true };
-    else {
-      if (!state.burnCancelled) {
-        toast("Le filtre n'a pas pu être incrusté dans la vidéo. La vidéo d'origine est conservée.");
-      }
+    else if (state.burnCancelled) {
+      /* Annulé : surtout ne rien mettre en cache. Sinon un envoi ultérieur
+         partirait avec la vidéo SANS filtre, sous la clé du filtre choisi —
+         l'invité recevrait autre chose que ce qu'il a vu à l'écran. */
+      throw cancelledError();
+    } else {
+      toast("Le filtre n'a pas pu être incrusté dans la vidéo. La vidéo d'origine est conservée.");
       result = { blob: state.mediaBlob, filterBurned: false };
     }
   }
@@ -1855,21 +1875,14 @@ async function buildFinalMedia(silent) {
 /* ───────────────────────── OVERLAY DE TRAVAIL ───────────────────────── */
 
 /*
- * Deux interruptions bien distinctes, et donc deux libellés distincts —
- * l'ancien « Passer cette étape » restait affiché pendant l'envoi, où il
- * ne voulait plus rien dire :
+ * Un seul bouton, un seul mot : « Annuler ».
  *
- *   'skip'   pendant l'incrustation du filtre → « Passer cette étape »
- *            (la vidéo d'origine est conservée, l'envoi continue) ;
- *   'cancel' pendant l'envoi                  → « Annuler l'envoi »
- *            (l'envoi est stoppé net, le souvenir reste sur le téléphone).
+ * L'ancien « Passer cette étape » ne voulait rien dire pour un invité : il
+ * poursuivait l'action avec un fichier différent de celui qu'il voyait à
+ * l'écran. Désormais, annuler annule — l'opération s'arrête et l'invité
+ * retrouve son aperçu intact, exactement comme il l'avait laissé.
  */
-const CANCEL_LABELS = {
-  skip: 'Passer cette étape',
-  cancel: "Annuler l'envoi"
-};
-
-function setWorking(visible, text, progress, cancelMode, indeterminate) {
+function setWorking(visible, text, progress, cancellable, indeterminate) {
   el.working.hidden = !visible;
   state.isBusy = visible;
   if (text) { el.workingText.textContent = text; announce(text); }
@@ -1881,88 +1894,153 @@ function setWorking(visible, text, progress, cancelMode, indeterminate) {
     el.workingFill.style.width = Math.round(Math.max(0, Math.min(1, progress)) * 100) + '%';
   }
 
-  /* Rétrocompatibilité : un simple booléen vaut encore « skip ». */
-  const mode = cancelMode === true ? 'skip' : (cancelMode || null);
-  state.cancelMode = visible ? mode : null;
-
-  if (mode) {
-    el.btnWorkingCancel.textContent = CANCEL_LABELS[mode];
-    el.btnWorkingCancel.hidden = false;
-  } else {
-    el.btnWorkingCancel.hidden = true;
-  }
+  el.btnWorkingCancel.hidden = !cancellable;
+  if (visible && cancellable) el.btnWorkingCancel.textContent = 'Annuler';
+  if (!visible) state.cancelled = false;
 }
 
 el.btnWorkingCancel.addEventListener('click', () => {
-  const mode = state.cancelMode;
-  el.btnWorkingCancel.hidden = true;
-
-  if (mode === 'cancel') {
-    /* L'envoi est abandonné, mais le souvenir a déjà été écrit sur
-       l'appareil : il repartira tout seul au prochain retour du réseau.
-       Rien n'est perdu, et l'invité récupère la main immédiatement. */
-    state.sendCancelled = true;
-    el.workingText.textContent = "Annulation de l'envoi…";
-    if (state.activeXhr) { try { state.activeXhr.abort(); } catch (e) {} }
-    if (state.activePoll) { state.activePoll.stop(true); state.activePoll = null; }
-    return;
-  }
-
+  state.cancelled = true;
   state.burnCancelled = true;
-  el.workingText.textContent = 'Interruption…';
+  el.btnWorkingCancel.hidden = true;
+  el.workingText.textContent = 'Annulation…';
+
+  /* Coupe aussi tout envoi resté en cours au premier plan. */
+  if (state.activeXhr) { try { state.activeXhr.abort(); } catch (e) {} }
+  if (state.activePoll) { state.activePoll.stop(true); state.activePoll = null; }
 });
 
 
 /* ───────────────────────── ENREGISTRER / PARTAGER ───────────────────────── */
 
-el.btnSaveShare.addEventListener('click', async () => {
-  if (!state.mediaBlob || state.isBusy) return;
-  el.btnSaveShare.disabled = true;
+/*
+ * ENREGISTRER DANS LA GALERIE / PARTAGER
+ *
+ * Le point capital, et la cause du bug d'origine.
+ *
+ * iOS n'autorise `navigator.share()` que pendant l'« activation
+ * utilisateur » : la fenêtre ouverte par le toucher de l'invité. Or le code
+ * précédent composait la photo AVANT d'appeler share(). Cette attente
+ * consommait l'activation, Safari refusait le partage, et le repli
+ * téléchargeait le fichier — ce qui, sur iPhone, ouvre un onglet Safari au
+ * lieu d'enregistrer quoi que ce soit. D'où l'impossibilité d'envoyer vers
+ * Snapchat ou WhatsApp.
+ *
+ * La solution : le fichier est prêt AVANT le toucher. Au moment du clic, on
+ * appelle share() immédiatement, sans le moindre `await`. La feuille de
+ * partage native s'ouvre alors instantanément, avec « Enregistrer l'image »,
+ * WhatsApp et Snapchat directement dedans.
+ *
+ * À savoir : aucune page web, sur aucun navigateur, ne peut écrire seule
+ * dans l'application Photos. La feuille de partage native EST le chemin
+ * officiel — et c'est un seul geste.
+ */
 
-  try {
-    const { blob } = await buildFinalMedia();
-    const name = buildFileName(blob.type);
-    const file = new File([blob], name, { type: blob.type });
-    setWorking(false);
-
-    if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
-      try {
-        await navigator.share({
-          files: [file],
-          title: 'Mon souvenir — Salma & Soufiane',
-          text: 'Mon souvenir du mariage de Salma & Soufiane.'
-        });
-        announce('Menu de partage ouvert.');
-      } catch (err) {
-        if (err && err.name !== 'AbortError') {
-          console.warn('[share]', err);
-          downloadBlob(blob, name);
-        }
-      }
-    } else {
-      downloadBlob(blob, name);
-      toast('Fichier téléchargé (' + formatBytes(blob.size) + ').', 'success');
-    }
-  } catch (err) {
-    console.error('[save]', err);
-    toast("L'enregistrement a échoué. Réessayez.");
-  } finally {
-    el.btnSaveShare.disabled = false;
-    setWorking(false);
-  }
-});
-
-function downloadBlob(blob, name) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30000);
+function shareFileIsFresh() {
+  return !!(state.shareFile && state.shareFile.key === finalCacheKey());
 }
+
+function canShareFiles(file) {
+  return !!(navigator.share && navigator.canShare && navigator.canShare({ files: [file] }));
+}
+
+/* Appel synchrone : c'est ce qui préserve l'activation utilisateur. */
+function shareNow() {
+  const entry = state.shareFile;
+  if (!entry) return false;
+
+  if (!canShareFiles(entry.file)) {
+    offerLongPressSave(entry);
+    return true;
+  }
+
+  navigator.share({
+    files: [entry.file],
+    title: 'Mon souvenir — Salma & Soufiane'
+  }).then(() => {
+    announce('Feuille de partage ouverte.');
+  }).catch((err) => {
+    if (err && err.name === 'AbortError') return;
+    console.warn('[partage]', err);
+    offerLongPressSave(entry);
+  });
+
+  return true;
+}
+
+/*
+ * Repli sans jamais quitter la page : la photo finale, filtre compris, est
+ * affichée telle quelle dans l'aperçu. Un appui long dessus propose alors
+ * « Ajouter aux photos » — l'invité reste dans l'application, et l'image
+ * atterrit bien dans sa galerie.
+ */
+function offerLongPressSave(entry) {
+  if (state.mediaType !== 'photo') {
+    toast("Ce navigateur ne permet pas d'enregistrer la vidéo. Envoyez-la aux " +
+          'mariés : ils vous la renverront.');
+    return;
+  }
+  revokeShareURL();
+  state.shareURL = URL.createObjectURL(entry.file);
+  el.previewImg.src = state.shareURL;
+  el.filterOverlay.hidden = true;   /* le filtre est déjà dans l'image */
+  toast('Appui long sur la photo, puis « Ajouter aux photos ».', 'success');
+}
+
+function revokeShareURL() {
+  if (state.shareURL) { URL.revokeObjectURL(state.shareURL); state.shareURL = null; }
+}
+
+/* Prépare le fichier en silence, pour que le toucher suivant soit immédiat. */
+async function prepareShareFile() {
+  const key = finalCacheKey();
+  if (state.shareFile && state.shareFile.key === key) return state.shareFile;
+
+  const { blob } = await buildFinalMedia();
+  if (!blob || state.cancelled) return null;
+
+  const name = buildFileName(blob.type);
+  state.shareFile = { key: key, file: new File([blob], name, { type: blob.type }) };
+  updateSaveButton();
+  return state.shareFile;
+}
+
+function updateSaveButton() {
+  /* Une photo est prête en une demi-seconde : le libellé reste donc
+     « Enregistrer » et un seul toucher suffit. Une vidéo demande un
+     réencodage : on le dit franchement plutôt que de faire patienter. */
+  const ready = shareFileIsFresh() || state.mediaType === 'photo';
+  el.saveShareLabel.textContent = ready
+    ? ' Enregistrer dans mes photos'
+    : ' Préparer l’enregistrement';
+}
+
+el.btnSaveShare.addEventListener('click', () => {
+  if (!state.mediaBlob || state.isBusy) return;
+
+  /* Chemin normal : le fichier est déjà prêt, on partage sans aucune attente. */
+  if (shareFileIsFresh()) { shareNow(); return; }
+
+  /* Vidéo non encore incrustée : on prépare, puis on demande un second
+     toucher. C'est la seule façon honnête de conserver l'activation
+     utilisateur exigée par iOS. */
+  el.btnSaveShare.disabled = true;
+  prepareShareFile()
+    .then((entry) => {
+      if (!entry || state.cancelled) return;
+      setWorking(false);
+      toast('Votre souvenir est prêt. Touchez à nouveau pour l’enregistrer.', 'success');
+    })
+    .catch((err) => {
+      if (err && err.cancelled) { toast('Annulé. Votre souvenir est intact.'); return; }
+      console.error('[enregistrer]', err);
+      toast('La préparation a échoué. Réessayez.');
+    })
+    .finally(() => {
+      el.btnSaveShare.disabled = false;
+      setWorking(false);
+    });
+});
 
 
 /* ───────────────────────── ENVOI AUX MARIÉS ───────────────────────── */
@@ -2184,9 +2262,7 @@ function isPermanentError(message) {
 
 /* Envoi d'un élément de la file. Résout avec le statut du serveur,
    rejette si l'envoi n'a pas pu être confirmé. */
-async function attemptSend(item, options) {
-  const interactive = !!(options && options.interactive);
-
+async function attemptSend(item) {
   /* Le souvenir est-il déjà arrivé lors d'une tentative précédente ?
      Sans ce contrôle, un renvoi créerait un doublon dans Drive. */
   if (item.attempts > 0) {
@@ -2199,11 +2275,8 @@ async function attemptSend(item, options) {
     }
   }
 
-  if (interactive) setWorking(true, 'Préparation de votre souvenir…', 0.12, 'cancel');
   const blob = new Blob([item.bytes], { type: item.mimeType });
   const mediaBase64 = await blobToBase64(blob);
-
-  if (interactive && state.sendCancelled) throw cancelledError();
 
   const payload = JSON.stringify({
     uploadId: item.uploadId,
@@ -2219,13 +2292,9 @@ async function attemptSend(item, options) {
     filterBurned: item.filterBurned
   });
 
-  if (interactive) {
-    setWorking(true, 'Envoi aux mariés… (' + formatBytes(item.size) + ')', null, 'cancel', true);
-  }
-
   const response = await postMedia(CONFIG.API_URL, payload);
 
-  if (response.aborted || (interactive && state.sendCancelled)) throw cancelledError();
+  if (response.aborted) throw cancelledError();
 
   /* Si la requête a échoué ALORS QUE l'appareil est hors ligne, inutile
      d'interroger le statut pendant des minutes : on abandonne tout de suite
@@ -2236,8 +2305,6 @@ async function attemptSend(item, options) {
     error.network = true;
     throw error;
   }
-
-  if (interactive) setWorking(true, 'Enregistrement dans l’album…', 0.85, 'cancel', false);
 
   return pollUploadStatus(item.uploadId);
 }
@@ -2269,7 +2336,7 @@ async function processQueue(reason) {
       item.attempts = (item.attempts || 0) + 1;
       await queuePut(item);
 
-      await attemptSend(item, { interactive: false });
+      await attemptSend(item);
       await queueDelete(item.uploadId);
       sent++;
     } catch (err) {
@@ -2293,6 +2360,20 @@ async function processQueue(reason) {
   }
 }
 
+/*
+ * ENVOI AUX MARIÉS — confirmation immédiate, transfert en arrière-plan.
+ *
+ * Auparavant, l'invité regardait un spinner pendant toute la durée du
+ * transfert : le fichier est encodé en base64 puis remis à Google Apps
+ * Script, qui répond lentement. Sur le wifi d'une salle, cela pouvait durer
+ * une minute — assez pour qu'on croie l'application plantée.
+ *
+ * Le souvenir est maintenant écrit sur le téléphone (IndexedDB) puis
+ * confirmé tout de suite : l'invité voit « Merci ! » en une fraction de
+ * seconde. Le transfert se poursuit seul en arrière-plan, avec reprise
+ * automatique en cas de coupure, et l'écran de confirmation affiche
+ * honnêtement où il en est.
+ */
 el.btnSend.addEventListener('click', async () => {
   if (!state.mediaBlob || state.isBusy) return;
   if (state.isSent) { toast('Ce souvenir a déjà été envoyé.'); return; }
@@ -2300,15 +2381,19 @@ el.btnSend.addEventListener('click', async () => {
   el.btnSend.disabled = true;
   el.btnSaveShare.disabled = true;
   state.message = el.captionInput.value.trim();
-  state.sendCancelled = false;
+  state.cancelled = false;
 
   const filter = currentFilter();
-  let pending = null;   /* souvenir écrit dans la file, à retirer si annulé */
 
   try {
+    /* Seule attente conservée : composer le fichier. Instantané pour une
+       photo (déjà préparée), le temps de la vidéo sinon — avec « Annuler ». */
     const { blob, filterBurned } = await buildFinalMedia();
 
-    setWorking(true, 'Vérification du fichier…', 0.05, 'cancel');
+    if (state.cancelled) {
+      toast('Envoi annulé. Votre souvenir est intact.');
+      return;
+    }
 
     if (!blob || blob.size === 0) throw new Error('Le fichier est vide.');
 
@@ -2356,59 +2441,87 @@ el.btnSend.addEventListener('click', async () => {
       duration: item.duration, filterId: item.filterId, filterBurned
     });
 
-    /* Écrit sur l'appareil AVANT l'envoi : même si le réseau lâche
-       maintenant, le souvenir est déjà à l'abri. */
+    /* Écrit sur l'appareil AVANT toute tentative réseau : à partir d'ici,
+       le souvenir ne peut plus être perdu, même si le wifi lâche. */
     let queued = false;
-    try { await queuePut(item); queued = true; pending = item; }
+    try { await queuePut(item); queued = true; }
     catch (err) { console.warn('[file] stockage local indisponible :', err); }
 
-    const result = await attemptSend(item, { interactive: true });
-
-    pending = null;
-    if (queued) { try { await queueDelete(item.uploadId); } catch (e) {} }
-
+    /* Confirmation immédiate : plus aucune attente pour l'invité. */
     state.isSent = true;
     setWorking(false);
-    el.doneText.textContent = 'Votre souvenir a bien été envoyé aux mariés' +
-      (result && result.filename ? ' (' + result.filename + ').' : '.');
     showScreen('done');
-    announce('Votre souvenir a bien été envoyé aux mariés.');
+    announce('Votre souvenir est enregistré. L’envoi se termine tout seul.');
+
+    if (queued) {
+      setDoneStatus('sending', 'Envoi aux mariés en cours… vous pouvez continuer.');
+      deliverInBackground(item);
+    } else {
+      /* Sans stockage local (navigation privée), on ne peut pas différer :
+         l'envoi doit aboutir maintenant, sinon le souvenir serait perdu. */
+      setDoneStatus('sending', 'Envoi aux mariés en cours… restez sur cette page.');
+      deliverInBackground(item, { noQueue: true });
+    }
 
   } catch (err) {
     setWorking(false);
 
-    /* Annulation volontaire : ce n'est pas une erreur. Le souvenir a déjà
-       été écrit sur l'appareil, il repartira seul si l'invité le souhaite. */
     if (err && err.cancelled) {
-      console.info('[upload] annulé par l’invité.');
-      /* Retiré de la file d'attente : annuler doit vraiment annuler, sinon
-         le souvenir repartirait tout seul au prochain retour du réseau. */
-      if (pending) { try { await queueDelete(pending.uploadId); } catch (e) {} }
-      toast('Envoi annulé. Votre souvenir est toujours là : vous pouvez le ' +
-            'modifier, l’enregistrer sur votre téléphone, ou le renvoyer.');
+      toast('Envoi annulé. Votre souvenir est intact.');
       return;
     }
 
     console.error('[upload] échec :', err, err && err.details);
-
     const message = err && err.message ? err.message : 'erreur inconnue';
+    toast("L'envoi a échoué : " + message);
 
-    if (isPermanentError(message) || (err && err.permanent)) {
-      /* Rien à réessayer : l'invité doit agir. */
-      toast("L'envoi a échoué : " + message);
-    } else {
-      /* Réseau ou serveur : le souvenir reste en file et repartira seul. */
-      toast('Réseau indisponible. Votre souvenir est conservé sur votre téléphone ' +
-            'et sera envoyé automatiquement dès le retour de la connexion. ' +
-            'Vous pouvez fermer cette page.');
-    }
   } finally {
-    if (state.activePoll) { state.activePoll.stop(); state.activePoll = null; }
     el.btnSend.disabled = state.isSent;
     el.btnSaveShare.disabled = false;
     setWorking(false);
   }
 });
+
+/*
+ * Transfert en arrière-plan. L'invité est déjà sur l'écran de confirmation :
+ * on se contente d'y tenir le statut à jour, sans jamais le bloquer.
+ */
+async function deliverInBackground(item, options) {
+  const noQueue = !!(options && options.noQueue);
+  try {
+    await attemptSend(item);
+    if (!noQueue) { try { await queueDelete(item.uploadId); } catch (e) {} }
+    setDoneStatus('sent', 'Votre souvenir est bien arrivé chez les mariés.');
+  } catch (err) {
+    console.info('[upload] transfert différé :', err && err.message);
+
+    if (err && err.permanent) {
+      if (!noQueue) { try { await queueDelete(item.uploadId); } catch (e) {} }
+      setDoneStatus('failed', "Ce souvenir n'a pas pu être envoyé : " + err.message);
+      return;
+    }
+    if (noQueue) {
+      setDoneStatus('failed', "L'envoi a échoué et votre navigateur ne permet pas " +
+                             'de le conserver. Enregistrez le souvenir sur votre téléphone.');
+      return;
+    }
+    setDoneStatus('pending', 'Connexion capricieuse : votre souvenir est gardé sur ce ' +
+                             'téléphone et partira tout seul dès que le réseau revient.');
+  }
+}
+
+/* Statut d'envoi affiché sur l'écran de confirmation.
+   Si l'invité est déjà reparti prendre un autre souvenir, une information
+   importante lui est portée par un bandeau plutôt que sur un écran caché. */
+function setDoneStatus(kind, text) {
+  el.doneStatus.textContent = text;
+  el.doneStatus.className = 'done__status is-' + kind;
+  el.doneStatus.hidden = false;
+
+  if (kind === 'sending') return;
+  if (el.screenDone.classList.contains('is-active')) { announce(text); return; }
+  toast(text, kind === 'sent' ? 'success' : undefined);
+}
 
 window.addEventListener('online', () => processQueue('retour du réseau'));
 
@@ -2459,6 +2572,10 @@ el.btnDoneHome.addEventListener('click', () => {
 
 function resetMedia() {
   revokePreviewURL();
+  revokeShareURL();
+  state.shareFile = null;
+  state.cancelled = false;
+  el.doneStatus.hidden = true;
   el.previewImg.removeAttribute('src');
   el.previewVideo.removeAttribute('src');
   el.filterOverlay.hidden = true;
@@ -2490,6 +2607,7 @@ window.addEventListener('pagehide', () => {
   clearTimeout(speculativeTimer);
   clearInterval(state.recordTimerId);
   revokePreviewURL();
+  revokeShareURL();
   if (state.activePoll) state.activePoll.stop();
   if (state.activeXhr) { try { state.activeXhr.abort(); } catch (e) {} }
 });

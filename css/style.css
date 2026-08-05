@@ -167,7 +167,21 @@ body.is-scrollable { overflow: auto; }
 .done__rule { display: flex; align-items: center; gap: 0.7rem; max-width: 150px; margin: 1.1rem auto 1.3rem; }
 .done__rule i { flex: 1; height: 1px; background: rgba(93,38,44,0.14); }
 .done__rule span { font-size: 0.55rem; color: var(--bordeaux); opacity: 0.45; }
-.done__text { font-size: 0.88rem; font-weight: 400; line-height: 1.7; color: var(--muted); margin-bottom: 2rem; }
+.done__text { font-size: 0.88rem; font-weight: 400; line-height: 1.7; color: var(--muted); margin-bottom: 1rem; }
+
+/* Statut du transfert en arrière-plan. Discret : l'invité a déjà eu sa
+   confirmation, c'est une information, pas une alerte. */
+.done__status {
+  font-size: 0.74rem; font-weight: 500; line-height: 1.6;
+  border-radius: var(--r); padding: 0.65rem 0.85rem; margin-bottom: 2rem;
+  background: var(--cream-dark); color: var(--muted);
+}
+.done__status[hidden] { display: none; }
+.done__status.is-sending::before { content: '↻  '; }
+.done__status.is-sent { background: #F0F7F0; color: #1F5B25; }
+.done__status.is-sent::before { content: '✓  '; }
+.done__status.is-pending { background: #FBF4E6; color: #7A5A16; }
+.done__status.is-failed { background: #FFF0F0; color: #8B1F1F; }
 
 /* ═══════════════════ BOUTONS ═══════════════════ */
 
