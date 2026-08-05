@@ -348,10 +348,14 @@ body.is-scrollable { overflow: auto; }
   width: 100%; height: 100%;
   max-width: 100%; max-height: 100%;
 }
+/* Aperçu réellement plein écran : le média est capturé au format de l'écran,
+   « cover » remplit donc toute la surface sans bande noire et sans recadrage.
+   Le filtre est superposé sur la même boîte avec le même ajustement :
+   l'aperçu et le fichier exporté sont rigoureusement identiques. */
 .mediastage__media {
   display: block;
   width: 100%; height: 100%;
-  object-fit: contain;
+  object-fit: cover;
   background: #000;
 }
 .mediastage__media[hidden] { display: none; }
@@ -363,6 +367,10 @@ body.is-scrollable { overflow: auto; }
   z-index: 2;
 }
 .mediastage__filter[hidden] { display: none; }
+
+/* Indice discret de lecture vidéo (pas de contrôles natifs qui
+   masqueraient le filtre : un appui simple lit ou met en pause). */
+.mediastage__media[data-paused="true"] { filter: brightness(0.85); }
 
 .filter-name {
   color: #fff; font-size: 0.6rem; font-weight: 500;
@@ -446,6 +454,19 @@ body.is-scrollable { overflow: auto; }
 .working__text { font-size: 0.78rem; font-weight: 300; line-height: 1.6; margin: 1rem 0 1.1rem; }
 .working__bar { height: 3px; background: rgba(255,255,255,0.18); border-radius: 2px; overflow: hidden; margin-bottom: 1.25rem; }
 .working__fill { height: 100%; width: 0%; background: var(--gold); transition: width 0.3s var(--ease); }
+
+/* Envoi : la durée exacte est inconnue (aucune progression d'upload n'est
+   lisible sans déclencher un préflight CORS refusé par Apps Script).
+   La barre est donc honnêtement indéterminée plutôt que faussement chiffrée. */
+.working__fill.is-indeterminate {
+  width: 35%;
+  transition: none;
+  animation: slide 1.4s var(--ease) infinite;
+}
+@keyframes slide {
+  0%   { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
 
 .spinner {
   width: 34px; height: 34px; margin: 0 auto;

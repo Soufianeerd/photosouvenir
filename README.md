@@ -147,8 +147,19 @@ fichier qui n'est ni une image ni une vidéo.
 | Photos acceptées | JPEG, PNG, WebP | JPEG produit |
 | Vidéos acceptées | MP4, WebM, MOV | MP4 ou WebM selon le navigateur |
 
-Le débit vidéo (2,5 Mbit/s + 128 kbit/s d'audio) est déduit de ces limites :
-21 Mo × 8 ÷ 60 s ≈ 2,8 Mbit/s au total. Une vidéo de 60 s pèse environ 19,7 Mo.
+### Qualité et taille des vidéos
+
+L'enregistrement se fait en 720p à **4 Mbit/s** (+ 128 kbit/s d'audio), et non
+à un débit bridé pour que le pire cas tienne dans la limite. La taille est
+surveillée pendant l'enregistrement : à 20 Mo atteints, la capture s'arrête
+proprement et l'invité en est informé.
+
+Une capture typique de 10 à 20 secondes pèse ainsi 5 à 10 Mo — nettement plus
+nette à l'image, et bien plus rapide à envoyer, que les 20 Mo systématiques de
+l'approche précédente.
+
+Le média est également capturé **au format de l'écran**, ce qui supprime les
+pixels jamais affichés et réduit encore le poids du fichier.
 
 ### Confirmation d'envoi
 
@@ -194,11 +205,18 @@ Après déploiement, recharger en vidant le cache (ou en navigation privée) pou
 
 ## Limites techniques connues
 
-- **Filtre incrusté dans les vidéos** : le réencodage avec le filtre nécessite
-  `HTMLVideoElement.captureStream()`. Cette API existe sur Chrome (Android et
-  ordinateur) mais **pas sur Safari iOS**. Sur iPhone, la vidéo envoyée est donc
-  la vidéo d'origine, sans filtre incrusté ; l'interface l'indique explicitement
-  et l'identifiant du filtre choisi est tout de même transmis aux mariés.
+- **Progression d'envoi** : aucun pourcentage n'est affiché pendant l'envoi, et
+  c'est délibéré. Attacher un écouteur à `xhr.upload` rendrait la requête « non
+  simple » au sens CORS et déclencherait un préflight `OPTIONS` que Google Apps
+  Script ne gère pas : le POST ne partirait jamais. La barre est donc
+  indéterminée, avec la taille réelle du fichier affichée, plutôt que faussement
+  chiffrée.
+- **Incrustation du filtre dans les vidéos** : elle repose sur
+  `canvas.captureStream()` + `MediaRecorder` + `AudioContext`, toutes
+  disponibles sur Safari iOS 15+. Le réencodage se fait en temps réel : une
+  vidéo de 15 s demande environ 15 s de traitement, avec une barre de
+  progression et un bouton « Passer cette étape ». Si l'appareil ne le permet
+  pas, la vidéo d'origine est conservée et l'interface le dit explicitement.
 - **Enregistrement dans la galerie iOS** : un site web ne peut pas écrire
   directement dans l'application Photos. Le bouton ouvre la feuille de partage
   native ; c'est l'invité qui choisit « Enregistrer la vidéo ». L'intitulé du
