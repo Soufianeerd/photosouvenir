@@ -56,28 +56,42 @@
 
       <!-- ÉTAPE 2 : CAPTURE -->
       <div class="step" id="step2">
-        <div class="step-indicator">
-          <div class="step-dot done"></div>
-          <div class="step-dot current"></div>
-          <div class="step-dot"></div>
-          <div class="step-dot"></div>
-        </div>
-        <span class="step-label">Étape 2 / 3</span>
-        <h2 class="step-title">Votre Souvenir</h2>
-        
-        <!-- CAROUSEL FILTRES -->
-        <div class="filter-carousel" id="filterCarousel">
-          <!-- Injecté via JS -->
-        </div>
-
-        <!-- CAMERA CONTAINER -->
+        <!-- CAMERA CONTAINER (Full Screen) -->
         <div class="camera-container" id="cameraContainer">
           <video id="cameraFeed" class="camera-feed" autoplay playsinline muted></video>
           <div id="cameraOverlay" class="camera-overlay"></div>
-          <div id="videoTimer" class="video-timer">00:00</div>
           
+          <!-- UI Flottante par dessus la caméra -->
+          <div class="camera-ui">
+            <!-- Haut : Bouton retour et Timer -->
+            <div class="camera-ui__top">
+              <button class="btn btn--ghost btn--back" id="btnBackToStep1">
+                ← Retour
+              </button>
+              <div id="videoTimer" class="video-timer">00:00</div>
+            </div>
+
+            <!-- Bas : Filtres et Contrôles -->
+            <div class="camera-ui__bottom">
+              <div class="filter-carousel" id="filterCarousel">
+                <!-- Injecté via JS -->
+              </div>
+
+              <div class="camera-controls" id="cameraControls">
+                <button class="btn-switch" id="btnSwitchCamera" title="Changer de caméra">🔄</button>
+                <div class="capture-actions">
+                  <button class="btn-capture" id="btnCapturePhoto" title="Prendre une photo">📷</button>
+                  <button class="btn-capture" id="btnCaptureVideo" title="Enregistrer une vidéo" style="border-color: #c0392b; color: #c0392b;">🔴</button>
+                </div>
+              </div>
+              <p class="step-desc shadow-text" style="text-align:center; font-size:0.6rem; margin-top: 1rem; color: #fff;">
+                Touchez 📷 pour une photo ou 🔴 pour une vidéo (max 60s).
+              </p>
+            </div>
+          </div>
+
           <!-- Fallback si refus de caméra -->
-          <div id="cameraFallback" style="display:none; position:absolute; inset:0; background:var(--cream-dark); flex-direction:column; align-items:center; justify-content:center; text-align:center; padding: 2rem;">
+          <div id="cameraFallback" style="display:none; position:absolute; inset:0; background:var(--cream-dark); flex-direction:column; align-items:center; justify-content:center; text-align:center; padding: 2rem; z-index: 20;">
             <p style="font-size: 0.8rem; margin-bottom: 1rem; color: var(--muted)">Caméra indisponible ou refusée.</p>
             <input type="file" accept="image/*,video/*" id="galleryInput" style="display:none" />
             <button class="btn btn--outline" onclick="document.getElementById('galleryInput').click()">
@@ -85,70 +99,48 @@
             </button>
           </div>
         </div>
-
-        <!-- CONTROLES CAMERA -->
-        <div class="camera-controls" id="cameraControls">
-          <button class="btn-switch" id="btnSwitchCamera" title="Changer de caméra">🔄</button>
-          <button class="btn-capture" id="btnCapturePhoto" title="Prendre une photo">📷</button>
-          <button class="btn-capture" id="btnCaptureVideo" title="Enregistrer une vidéo" style="border-color: #c0392b; color: #c0392b;">🔴</button>
-        </div>
-
-        <p class="step-desc" style="text-align:center; font-size:0.6rem; margin-top: 1rem;">
-          Touchez 📷 pour une photo ou 🔴 pour une vidéo (max 60s).
-        </p>
-        
-        <button class="btn btn--ghost" id="btnBackToStep1">
-          ← Modifier mon prénom
-        </button>
       </div>
 
       <!-- ÉTAPE 3 : VÉRIFICATION ET ENVOI -->
       <div class="step" id="step3">
-        <div class="step-indicator">
-          <div class="step-dot done"></div>
-          <div class="step-dot done"></div>
-          <div class="step-dot current"></div>
-          <div class="step-dot"></div>
-        </div>
-        <span class="step-label">Étape 3 / 3</span>
-        <h2 class="step-title">Vérifier &amp; envoyer</h2>
-
         <div class="preview-wrap" id="previewWrap">
           <img class="preview-img" id="previewImg" />
           <video class="preview-video" id="previewVideo" controls playsinline></video>
-          <span class="preview-badge" id="previewBadge">Aperçu</span>
-          <button class="preview-change" id="btnChangeMedia">Changer ✕</button>
-        </div>
+          
+          <!-- Bouton de retour en haut -->
+          <button class="preview-change" id="btnChangeMedia">← Recommencer</button>
+          
+          <!-- Panneau inférieur d'envoi -->
+          <div class="preview-ui__bottom">
+            <div class="photo-meta" id="photoMeta">
+              <span class="photo-meta__icon">💾</span>
+              <span class="photo-meta__name" id="metaName">—</span>
+              <span class="photo-meta__size" id="metaSize">—</span>
+            </div>
 
-        <div class="photo-meta" id="photoMeta">
-          <span class="photo-meta__icon">💾</span>
-          <span class="photo-meta__name" id="metaName">—</span>
-          <span class="photo-meta__size" id="metaSize">—</span>
-        </div>
+            <div class="field">
+              <input class="field__input shadow-input" type="text" id="captionInput" placeholder="Ajouter une légende (optionnel)…" maxlength="120" />
+            </div>
 
-        <div class="field">
-          <label class="field__label" for="captionInput">Légende <span style="opacity:.5;font-weight:300;">(optionnel)</span></label>
-          <input class="field__input" type="text" id="captionInput" placeholder="Un moment, une pensée…" maxlength="120" />
-        </div>
+            <div style="display:flex; gap:0.5rem; margin-bottom: 1.25rem;">
+              <button class="btn btn--download" id="btnSaveToDevice" style="flex:1; margin:0;">
+                <span class="btn__icon">⬇️</span>
+              </button>
+              <button class="btn btn--primary" id="btnShareNative" style="flex:1; margin:0;">
+                <span class="btn__icon">📤</span>
+              </button>
+            </div>
 
-        <!-- SAUVEGARDE & ENVOI CHOIX -->
-        <div style="display:flex; gap:0.5rem; margin-bottom: 1.25rem;">
-          <button class="btn btn--download" id="btnSaveToDevice" style="flex:1; margin:0;">
-            <span class="btn__icon">⬇️</span> Enregistrer
-          </button>
-          <button class="btn btn--primary" id="btnShareNative" style="flex:1; margin:0;">
-            <span class="btn__icon">📤</span> Partager
-          </button>
-        </div>
+            <div class="upload-progress" id="uploadProgress">
+              <div class="upload-progress__bar"><div class="upload-progress__fill" id="progressFill"></div></div>
+              <p class="upload-progress__text" id="progressText" style="color: #fff">Préparation…</p>
+            </div>
 
-        <div class="upload-progress" id="uploadProgress">
-          <div class="upload-progress__bar"><div class="upload-progress__fill" id="progressFill"></div></div>
-          <p class="upload-progress__text" id="progressText">Préparation…</p>
+            <button class="btn btn--primary" id="btnSendToDrive">
+              <span class="btn__icon">✉️</span> Envoyer aux mariés
+            </button>
+          </div>
         </div>
-
-        <button class="btn btn--primary" id="btnSendToDrive">
-          <span class="btn__icon">✉️</span> Envoyer aux mariés
-        </button>
       </div>
 
       <!-- CHARGEMENT -->

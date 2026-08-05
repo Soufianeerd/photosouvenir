@@ -121,6 +121,14 @@ function selectFilter(filter, el) {
 function showStep(stepId) {
   document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
   document.getElementById(stepId).classList.add('active');
+  
+  // Bascule du mode plein écran pour étape 2 et 3
+  if (stepId === 'step2' || stepId === 'step3') {
+    document.body.classList.add('fullscreen-mode');
+  } else {
+    document.body.classList.remove('fullscreen-mode');
+  }
+  
   els.loadingState.classList.remove('visible');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -202,17 +210,23 @@ els.btnCaptureVideo.addEventListener('click', () => {
 
 function startRecording() {
   recordedChunks = [];
+  state.recordStartTime = Date.now(); // Track start time for accurate duration
+  
+  // Configurer le MediaRecorder avec une forte compression (1.5 Mbps)
+  const options = { mimeType: 'video/mp4', videoBitsPerSecond: 1500000 };
   try {
-    mediaRecorder = new MediaRecorder(state.currentStream, { mimeType: 'video/mp4' });
+    mediaRecorder = new MediaRecorder(state.currentStream, options);
   } catch (e) {
-    mediaRecorder = new MediaRecorder(state.currentStream); // fallback mimeType
+    mediaRecorder = new MediaRecorder(state.currentStream, { videoBitsPerSecond: 1500000 }); // fallback mimeType
   }
   
   mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
   mediaRecorder.onstop = () => {
-    const type = mediaRecorder.mimeType || 'video/mp4';
-    state.mediaBlob = new Blob(recordedChunks, { type });
+    state.mediaBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/mp4' });
     state.mediaType = 'video';
+    
+    // Calculate real duration
+    state.videoDuration = Math.round((Date.now() - state.recordStartTime) / 1000);
     
     // Alerte sur les limites techniques de la vidéo sur mobile
     if(state.activeFilter.id !== 'none') {
@@ -227,7 +241,6 @@ function startRecording() {
   els.btnCaptureVideo.classList.add('recording');
   
   // Timer
-  state.recordStartTime = Date.now();
   els.videoTimer.classList.add('visible');
   els.videoTimer.classList.remove('warning');
   
@@ -343,7 +356,7 @@ els.btnSendToDrive.addEventListener('click', async () => {
       mediaType: state.mediaType,
       mimeType: state.mediaBlob.type,
       mediaBase64: base64,
-      duration: state.mediaType === 'video' ? 60 : 0,
+      duration: state.mediaType === 'video' ? (state.videoDuration || 0) : 0,
       guestName: state.userName,
       message: els.captionInput.value.trim(),
       filterId: state.activeFilter.id,

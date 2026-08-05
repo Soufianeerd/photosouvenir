@@ -28,7 +28,15 @@ body {
   flex-direction: column;
   align-items: center;
   -webkit-font-smoothing: antialiased;
+  transition: background 0.3s ease;
 }
+
+/* ── FULLSCREEN MODE ── */
+body.fullscreen-mode { background: #000; }
+body.fullscreen-mode .page { padding: 0; max-width: 100%; }
+body.fullscreen-mode .page-header { display: none; }
+body.fullscreen-mode .card { border: none; border-radius: 0; padding: 0; background: transparent; box-shadow: none; }
+body.fullscreen-mode .page-footer { display: none; }
 
 /* ═══════════════════ PAGE ═══════════════════ */
 .page {
@@ -38,6 +46,7 @@ body {
   display: flex;
   flex-direction: column;
   padding: 0 1.5rem 2.5rem;
+  transition: all 0.3s ease;
 }
 
 /* ── HEADER ── */
@@ -46,6 +55,7 @@ body {
   padding: 2.75rem 0 1.75rem;
   border-bottom: 1px solid rgba(93,38,44,0.08);
   margin-bottom: 2rem;
+  transition: opacity 0.3s;
 }
 .header__ornament { display: block; font-size: 0.55rem; letter-spacing: 0.35em; color: var(--bordeaux); opacity: 0.5; margin-bottom: 0.65rem; text-transform: uppercase; }
 .header__title    { font-family: var(--font-serif); font-size: clamp(1.8rem, 7vw, 2.4rem); font-weight: 300; color: var(--ink); line-height: 1.2; margin-bottom: 0.4rem; }
@@ -53,7 +63,7 @@ body {
 .header__sub      { font-family: var(--font-sans); font-size: 0.68rem; font-weight: 300; letter-spacing: 0.14em; color: var(--muted); text-transform: uppercase; }
 
 /* ── CARD ── */
-.card { background: var(--cream); border: 1px solid rgba(93,38,44,0.1); border-radius: var(--r); padding: 2rem 1.5rem; flex: 1; }
+.card { background: var(--cream); border: 1px solid rgba(93,38,44,0.1); border-radius: var(--r); padding: 2rem 1.5rem; flex: 1; display: flex; flex-direction: column; box-shadow: 0 8px 30px rgba(93,38,44,0.04); transition: all 0.3s ease; }
 
 /* ── ÉTAPES ── */
 .step { display: none; animation: stepIn 0.35s var(--ease) both; }
@@ -195,3 +205,200 @@ body {
 .or-sep { display: flex; align-items: center; gap: 0.75rem; margin: 0.75rem 0 1rem; }
 .or-sep__line { flex: 1; height: 1px; background: rgba(93,38,44,0.1); }
 .or-sep__text { font-family: var(--font-sans); font-size: 0.6rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+
+/* ═══════════════════ CAMÉRA (FULLSCREEN) ═══════════════════ */
+.camera-container {
+  position: absolute;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  background: #000;
+  overflow: hidden;
+  z-index: 10;
+}
+
+.camera-feed {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+  transform: scaleX(-1);
+}
+.camera-feed.rear { transform: none; }
+
+.camera-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  pointer-events: none;
+  z-index: 2;
+  transition: background-image 0.3s;
+}
+
+/* UI Flottante */
+.camera-ui {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: max(2rem, env(safe-area-inset-top)) 1rem max(2rem, env(safe-area-inset-bottom)) 1rem;
+  pointer-events: none;
+}
+
+.camera-ui > * {
+  pointer-events: auto;
+}
+
+.camera-ui__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.camera-ui__bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.btn--back {
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  border-color: rgba(255,255,255,0.2);
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+}
+
+.video-timer {
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  padding: 0.4rem 0.8rem;
+  border-radius: 20px;
+  font-family: monospace;
+  font-size: 1rem;
+  display: none;
+}
+
+.camera-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.capture-actions {
+  display: flex;
+  gap: 1rem;
+  background: rgba(0,0,0,0.3);
+  padding: 0.5rem;
+  border-radius: 40px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.btn-capture, .btn-switch {
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 50%;
+  border: 2px solid var(--bordeaux);
+  background: rgba(249,247,242,0.9);
+  color: var(--bordeaux);
+  font-size: 1.5rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s;
+}
+
+.btn-switch {
+  width: 3rem;
+  height: 3rem;
+  font-size: 1.2rem;
+  background: rgba(0,0,0,0.5);
+  border: 1px solid rgba(255,255,255,0.3);
+}
+
+.btn-capture:active {
+  transform: scale(0.9);
+}
+
+.shadow-text {
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+
+/* ═══════════════════ APERÇU (FULLSCREEN) ═══════════════════ */
+.preview-wrap {
+  position: absolute;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  background: #000;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-img, .preview-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+}
+
+.preview-change {
+  position: absolute;
+  top: max(2rem, env(safe-area-inset-top));
+  left: 1rem;
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.2);
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  z-index: 20;
+}
+
+.preview-ui__bottom {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  padding: 2rem 1.5rem max(2rem, env(safe-area-inset-bottom));
+  background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 70%, transparent 100%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+}
+
+.photo-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: rgba(255,255,255,0.8);
+  margin-bottom: 1rem;
+  background: transparent;
+  padding: 0;
+}
+.photo-meta__name { color: #fff; }
+
+.shadow-input {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: #fff;
+}
+.shadow-input::placeholder {
+  color: rgba(255,255,255,0.5);
+}
