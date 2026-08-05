@@ -9,9 +9,18 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!-- La poignée de main TLS vers Apps Script est ouverte dès le chargement :
+       elle n'est plus à payer au moment de l'envoi du souvenir. -->
+  <link rel="preconnect" href="https://script.google.com" crossorigin />
+  <link rel="dns-prefetch" href="https://script.google.com" />
+
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="css/style.css" />
+  <link rel="preload" as="fetch" href="filters/filters.json" crossorigin="anonymous" />
+
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
 </head>
 <body>
 
@@ -72,6 +81,9 @@
 <section class="screen screen--stage" id="screenCapture" aria-label="Prise de vue">
 
   <video id="cameraFeed" class="stage__media" autoplay playsinline muted></video>
+
+  <!-- Éclair de déclenchement : invisible hors capture -->
+  <div class="flash" id="captureFlash" aria-hidden="true"></div>
 
   <!-- Voile de sécurité lisibilité haut / bas -->
   <div class="stage__scrim stage__scrim--top" aria-hidden="true"></div>
@@ -151,6 +163,9 @@
     </div>
   </div>
 
+  <!-- Progression de lecture : remplace les contrôles natifs, qui masquaient le filtre -->
+  <div class="playline" id="playLine" aria-hidden="true" hidden><i id="playLineFill"></i></div>
+
   <div class="stage__scrim stage__scrim--top" aria-hidden="true"></div>
   <div class="stage__scrim stage__scrim--bottom stage__scrim--tall" aria-hidden="true"></div>
 
@@ -215,5 +230,18 @@
 </main>
 
 <script src="js/app.js" defer></script>
+
+<script>
+  /* Cache hors ligne : un invité qui crée plusieurs souvenirs dans la soirée
+     ne retélécharge plus rien, et une coupure de wifi ne casse plus la page.
+     L'enregistrement est différé pour ne pas concurrencer le premier rendu. */
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function (err) {
+        console.info('[sw] non enregistré :', err && err.message);
+      });
+    });
+  }
+</script>
 </body>
 </html>

@@ -75,9 +75,12 @@ const state = {
 
   videoStream: null,       // flux vidéo courant (change au basculement)
   audioStream: null,       // flux micro persistant, jamais interrompu
+  audioPromise: null,      // demande micro en cours, en arrière-plan
+  wakeLock: null,          // écran maintenu allumé pendant l'enregistrement
   facingMode: 'user',
   torchOn: false,
   captureMode: 'photo',
+  zoom: 1,                 // recadrage réel, appliqué à l'aperçu ET au fichier
 
   /* Canvas d'enregistrement alimenté en continu */
   recordCanvas: null,
@@ -105,6 +108,7 @@ const state = {
   recordMimeType: '',
   autoStopped: false,
 
+  previewMuted: false,
   isBusy: false,
   isSent: false,
   burnCancelled: false,
@@ -131,6 +135,9 @@ const el = {
   btnStart: $('btnStart'),
 
   cameraFeed: $('cameraFeed'),
+  captureFlash: $('captureFlash'),
+  playLine: $('playLine'),
+  playLineFill: $('playLineFill'),
   btnCaptureBack: $('btnCaptureBack'),
   btnSwitchCamera: $('btnSwitchCamera'),
   btnTorch: $('btnTorch'),
@@ -248,13 +255,14 @@ function loadImage(src) {
   });
 }
 
-/* Dessine en mode « cover » : recadre sans jamais étirer. */
-function drawCover(ctx, source, targetW, targetH, mirrored) {
+/* Dessine en mode « cover » : recadre sans jamais étirer.
+   Le facteur de zoom resserre le cadrage exactement comme à l'écran. */
+function drawCover(ctx, source, targetW, targetH, mirrored, zoom) {
   const iw = source.naturalWidth || source.videoWidth || source.width;
   const ih = source.naturalHeight || source.videoHeight || source.height;
   if (!iw || !ih) return;
 
-  const scale = Math.max(targetW / iw, targetH / ih);
+  const scale = Math.max(targetW / iw, targetH / ih) * (zoom || 1);
   const w = iw * scale;
   const h = ih * scale;
   const x = (targetW - w) / 2;
@@ -297,6 +305,18 @@ function blobToBase64(blob) {
   });
 }
 
+/* Octets bruts plutôt qu'un Blob : c'est la forme la plus sûre à stocker
+   en base, et la seule qui se relise identiquement sur tous les navigateurs. */
+function blobToArrayBuffer(blob) {
+  if (blob.arrayBuffer) return blob.arrayBuffer();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Lecture du fichier impossible.'));
+    reader.readAsArrayBuffer(blob);
+  });
+}
+
 function revokePreviewURL() {
   if (state.previewURL) { URL.revokeObjectURL(state.previewURL); state.previewURL = null; }
 }
@@ -304,10 +324,28 @@ function revokePreviewURL() {
 /* Format de l'écran : tout est capturé, affiché et exporté à ce format,
    ce qui garantit un plein écran sans bande noire et un rendu identique. */
 function viewportAspect() {
-  const w = window.innerWidth || 1080;
-  const h = window.innerHeight || 1920;
+  const vv = window.visualViewport;
+  const w = (vv && vv.width) || window.innerWidth || 1080;
+  const h = (vv && vv.height) || window.innerHeight || 1920;
   return w / h;
 }
+
+/*
+ * Sur iOS, la barre d'adresse Safari apparaît et disparaît en cours de route.
+ * On fige la hauteur réelle du viewport dans une variable CSS pour que les
+ * commandes ne soient jamais rognées, même pendant l'enregistrement.
+ */
+function syncViewportHeight() {
+  const vv = window.visualViewport;
+  const height = (vv && vv.height) || window.innerHeight;
+  if (height) document.documentElement.style.setProperty('--vh', height + 'px');
+}
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncViewportHeight);
+}
+window.addEventListener('orientationchange', () => setTimeout(syncViewportHeight, 250));
+window.addEventListener('resize', syncViewportHeight);
 
 
 /* ───────────────────────── NAVIGATION ───────────────────────── */
@@ -364,7 +402,10 @@ async function loadFilters() {
       mediaTypes: Array.isArray(f.mediaTypes) ? f.mediaTypes : ['photo', 'video'],
       portrait: f.id === 'none' ? '' : (f.portrait || `filters/portrait/filter-${f.id}.png`),
       landscape: f.id === 'none' ? '' : (f.landscape || ''),
-      thumbnail: f.id === 'none' ? '' : (f.thumbnail || '')
+      /* Convention : si tools/optimize-filters.sh a été lancé, la miniature
+         existe et est utilisée automatiquement. Sinon, repli silencieux sur
+         l'image plein format — aucune modification de filters.json requise. */
+      thumbnail: f.id === 'none' ? '' : (f.thumbnail || `filters/thumbnails/filter-${f.id}.png`)
     }))
     .sort((a, b) => a.order - b.order);
 
@@ -411,8 +452,18 @@ function buildFilterStrip() {
       const img = document.createElement('img');
       img.alt = '';
       img.decoding = 'async';
-      img.dataset.src = filter.thumbnail || filterSourceFor(filter);
-      img.onerror = () => { img.remove(); };
+      img.dataset.src = filter.thumbnail;
+      img.dataset.fallback = filterSourceFor(filter);
+      img.onerror = () => {
+        /* Miniature absente : on retombe une seule fois sur l'image complète. */
+        if (img.dataset.fallback) {
+          const full = img.dataset.fallback;
+          delete img.dataset.fallback;
+          img.src = full;
+        } else {
+          img.remove();
+        }
+      };
       chip.appendChild(img);
     }
 
@@ -469,6 +520,7 @@ function selectFilter(index, scrollIntoView) {
   }
 
   updateVideoFilterNotice();
+  scheduleSpeculativeRender();
   announce('Filtre sélectionné : ' + filter.name);
 
   [state.filterIndex - 1, state.filterIndex + 1].forEach((i) => {
@@ -481,6 +533,36 @@ function selectFilter(index, scrollIntoView) {
 function currentFilter() {
   const list = availableFilters();
   return list[state.filterIndex] || list[0] || { id: 'none', name: 'Aucun filtre' };
+}
+
+/*
+ * Pendant que l'invité cadre sa photo, les filtres sont téléchargés un par un,
+ * aux moments creux. Quand il arrive à l'aperçu, le défilement est instantané
+ * au lieu d'attendre 2 Mo par filtre sur le réseau de la salle.
+ */
+let filtersPreloaded = false;
+function preloadAllFilters() {
+  if (filtersPreloaded) return;
+  filtersPreloaded = true;
+
+  const sources = state.filters
+    .map((f) => f.portrait)
+    .filter(Boolean);
+
+  const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 400));
+  let index = 0;
+
+  const next = () => {
+    if (index >= sources.length) return;
+    const src = sources[index++];
+    const img = new Image();
+    img.decoding = 'async';
+    /* Chargement séquentiel : ne concurrence jamais le flux caméra. */
+    img.onload = img.onerror = () => idle(next);
+    img.src = src;
+  };
+
+  idle(next);
 }
 
 
@@ -498,6 +580,9 @@ function stopAudioStream() {
     state.audioStream.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} });
     state.audioStream = null;
   }
+  /* Sans cette remise à zéro, une nouvelle capture réutiliserait la promesse
+     déjà résolue et donc un flux micro éteint : vidéo sans son. */
+  state.audioPromise = null;
 }
 
 function stopAllStreams() {
@@ -540,16 +625,8 @@ async function startCamera() {
     return;
   }
 
-  /* Le micro est demandé une seule fois et conservé : il ne doit jamais
-     être coupé, sinon le basculement de caméra interromprait le son. */
-  if (!state.audioStream) {
-    try {
-      state.audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      console.warn('[camera] micro indisponible :', err && err.name);
-    }
-  }
-
+  /* La vidéo est demandée EN PREMIER : l'aperçu apparaît sans attendre
+     l'autorisation du micro, qui est obtenue ensuite en arrière-plan. */
   try {
     stopVideoStream();
     state.videoStream = await requestVideoStream(state.facingMode);
@@ -560,10 +637,34 @@ async function startCamera() {
 
   el.cameraFeed.srcObject = state.videoStream;
   el.cameraFeed.classList.toggle('is-mirrored', state.facingMode === 'user');
+  state.zoom = 1;
+  applyCameraTransform();
   try { await el.cameraFeed.play(); } catch (e) {}
 
   setupTorchButton();
   announce('Caméra prête.');
+
+  ensureAudioStream();
+  preloadAllFilters();
+}
+
+/*
+ * Micro : demandé une seule fois et conservé pour toute la session.
+ * Il ne doit jamais être coupé, sinon le basculement de caméra
+ * interromprait le son en pleine vidéo.
+ */
+function ensureAudioStream() {
+  if (state.audioStream) return Promise.resolve(state.audioStream);
+  if (state.audioPromise) return state.audioPromise;
+
+  state.audioPromise = navigator.mediaDevices.getUserMedia({ audio: true })
+    .then((stream) => { state.audioStream = stream; return stream; })
+    .catch((err) => {
+      console.warn('[camera] micro indisponible :', err && err.name);
+      return null;
+    });
+
+  return state.audioPromise;
 }
 
 /*
@@ -584,6 +685,8 @@ async function switchCamera() {
 
     el.cameraFeed.srcObject = newStream;
     el.cameraFeed.classList.toggle('is-mirrored', next === 'user');
+    state.zoom = 1;
+    applyCameraTransform();
     try { await el.cameraFeed.play(); } catch (e) {}
 
     setupTorchButton();
@@ -648,6 +751,100 @@ el.btnSwitchCamera.addEventListener('click', switchCamera);
 el.btnRetryCamera.addEventListener('click', startCamera);
 
 
+/* ───────────── GESTES CAMÉRA (zoom, double-tape) ───────────── */
+
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 4;
+
+function applyCameraTransform() {
+  const mirror = state.facingMode === 'user' ? -1 : 1;
+  el.cameraFeed.style.transform = 'scaleX(' + mirror + ') scale(' + state.zoom.toFixed(3) + ')';
+}
+
+function setZoom(value) {
+  const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value));
+  if (Math.abs(next - state.zoom) < 0.005) return;
+  state.zoom = next;
+  applyCameraTransform();
+}
+
+(function enableCaptureGestures() {
+  const pointers = new Map();
+  let pinchStartDistance = 0;
+  let pinchStartZoom = 1;
+  let lastTapAt = 0;
+  let lastTapX = 0;
+  let lastTapY = 0;
+
+  const onControl = (target) =>
+    !!(target && target.closest && target.closest('button, input, .modeswitch, .stage__blocker'));
+
+  const distance = () => {
+    const [a, b] = [...pointers.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  };
+
+  el.screenCapture.addEventListener('pointerdown', (e) => {
+    if (onControl(e.target)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointers.size === 2) {
+      pinchStartDistance = distance();
+      pinchStartZoom = state.zoom;
+    }
+  });
+
+  el.screenCapture.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointers.size === 2 && pinchStartDistance > 0) {
+      e.preventDefault();
+      setZoom(pinchStartZoom * (distance() / pinchStartDistance));
+    }
+  }, { passive: false });
+
+  const release = (e) => {
+    const wasPinching = pointers.size === 2;
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchStartDistance = 0;
+    if (wasPinching || onControl(e.target)) return;
+
+    /* Double-tape : bascule de caméra, comme sur les applications sociales. */
+    const now = Date.now();
+    if (now - lastTapAt < 320 &&
+        Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY) < 40) {
+      lastTapAt = 0;
+      switchCamera();
+      return;
+    }
+    lastTapAt = now;
+    lastTapX = e.clientX;
+    lastTapY = e.clientY;
+  };
+
+  el.screenCapture.addEventListener('pointerup', release);
+  el.screenCapture.addEventListener('pointercancel', (e) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchStartDistance = 0;
+  });
+})();
+
+
+/* ───────────── RETOURS DE CAPTURE ───────────── */
+
+function buzz(pattern) {
+  if (navigator.vibrate) { try { navigator.vibrate(pattern); } catch (e) {} }
+}
+
+function fireFlash() {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  el.captureFlash.classList.remove('is-firing');
+  void el.captureFlash.offsetWidth;   /* force le redémarrage de l'animation */
+  el.captureFlash.classList.add('is-firing');
+}
+
+
 /* ───────────── CANVAS D'ENREGISTREMENT (bascule à chaud) ───────────── */
 
 function recordCanvasSize() {
@@ -679,12 +876,8 @@ function startCanvasPipeline() {
   try { stream = canvas.captureStream(30); }
   catch (err) { console.warn('[canvas] captureStream indisponible :', err); return false; }
 
-  /* Le son vient du flux micro persistant, jamais du flux caméra. */
-  if (state.audioStream) {
-    state.audioStream.getAudioTracks().forEach((t) => {
-      try { stream.addTrack(t); } catch (e) {}
-    });
-  }
+  /* La piste audio est ajoutée au démarrage de l'enregistrement, et non ici :
+     le micro peut encore être en cours d'autorisation à ce moment-là. */
 
   state.recordCanvas = canvas;
   state.recordCtx = ctx;
@@ -695,7 +888,8 @@ function startCanvasPipeline() {
     if (!state.canvasPipelineActive) return;
     const video = el.cameraFeed;
     if (video.readyState >= 2 && video.videoWidth) {
-      drawCover(ctx, video, canvas.width, canvas.height, state.facingMode === 'user');
+      drawCover(ctx, video, canvas.width, canvas.height,
+                state.facingMode === 'user', state.zoom);
     }
     state.recordRafId = requestAnimationFrame(draw);
   };
@@ -739,7 +933,10 @@ function setCaptureMode(mode) {
 }
 
 el.modePhoto.addEventListener('click', () => setCaptureMode('photo'));
-el.modeVideo.addEventListener('click', () => setCaptureMode('video'));
+el.modeVideo.addEventListener('click', () => {
+  setCaptureMode('video');
+  startCanvasPipeline();   /* prêt à enregistrer instantanément */
+});
 
 
 /* ───────────────────────── DÉCLENCHEUR ───────────────────────── */
@@ -758,6 +955,10 @@ el.btnShutter.addEventListener('pointerdown', (e) => {
 
   pressActive = true;
   longPressFired = false;
+
+  /* Préchauffage : le canvas d'enregistrement commence à dessiner dès
+     l'appui, pour que la vidéo démarre sur une image et non sur du noir. */
+  if (!state.isRecording) startCanvasPipeline();
 
   if (state.captureMode === 'video') return;
 
@@ -847,8 +1048,11 @@ async function takePhoto() {
     canvas.height = h;
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingQuality = 'high';
-    drawCover(ctx, source, w, h, state.facingMode === 'user');
+    drawCover(ctx, source, w, h, state.facingMode === 'user', state.zoom);
     if (source.close) source.close();
+
+    fireFlash();
+    buzz(18);
 
     const blob = await canvasToBlob(canvas, 'image/jpeg', CONFIG.JPEG_QUALITY);
     if (!blob || blob.size === 0) throw new Error('Photo vide.');
@@ -900,6 +1104,15 @@ function startRecording() {
 
   if (canvasOk && state.recordStream) {
     sourceStream = state.recordStream;
+    /* Piste micro ajoutée maintenant : elle survit aux changements de caméra. */
+    if (state.audioStream && !sourceStream.getAudioTracks().length) {
+      state.audioStream.getAudioTracks().forEach((t) => {
+        try { sourceStream.addTrack(t); } catch (e) {}
+      });
+    }
+    if (!sourceStream.getAudioTracks().length) {
+      toast("Le micro n'est pas encore prêt : cette vidéo sera enregistrée sans son.");
+    }
     el.btnSwitchCamera.disabled = false;
   } else {
     const combined = new MediaStream();
@@ -1007,6 +1220,25 @@ function startRecording() {
   announce("Enregistrement vidéo démarré. Durée maximale : 60 secondes.");
 
   state.recordTimerId = setInterval(tickRecording, 200);
+  requestWakeLock();
+  buzz(28);
+}
+
+/* L'écran ne doit pas s'éteindre pendant qu'on filme. */
+async function requestWakeLock() {
+  if (!navigator.wakeLock || state.wakeLock) return;
+  try {
+    state.wakeLock = await navigator.wakeLock.request('screen');
+    state.wakeLock.addEventListener('release', () => { state.wakeLock = null; });
+  } catch (err) {
+    console.info('[wakelock] indisponible :', err && err.name);
+  }
+}
+
+function releaseWakeLock() {
+  if (!state.wakeLock) return;
+  try { state.wakeLock.release(); } catch (e) {}
+  state.wakeLock = null;
 }
 
 function tickRecording() {
@@ -1029,6 +1261,7 @@ function tickRecording() {
 function stopRecording() {
   if (!state.isRecording) return;
   state.isRecording = false;
+  buzz([14, 60, 14]);
   clearInterval(state.recordTimerId);
   try { state.mediaRecorder.stop(); } catch (e) { console.error(e); }
 }
@@ -1036,6 +1269,7 @@ function stopRecording() {
 function cleanupRecordingUI() {
   state.isRecording = false;
   clearInterval(state.recordTimerId);
+  releaseWakeLock();
   el.btnShutter.classList.remove('is-recording');
   el.recPill.hidden = true;
   el.btnSwitchCamera.disabled = false;
@@ -1154,9 +1388,7 @@ function goToPreview() {
     el.previewVideo.onloadedmetadata = () => {
       state.mediaWidth = el.previewVideo.videoWidth || state.mediaWidth;
       state.mediaHeight = el.previewVideo.videoHeight || state.mediaHeight;
-      el.previewVideo.play().catch(() => {
-        announce('Touchez la vidéo pour la lire.');
-      });
+      startPreviewPlayback();
     };
   }
 
@@ -1169,6 +1401,36 @@ function goToPreview() {
   showScreen('preview');
   announce('Aperçu de votre souvenir. Faites glisser pour découvrir les filtres.');
 }
+
+/*
+ * Lecture de l'aperçu.
+ * Les navigateurs mobiles refusent souvent la lecture automatique avec son.
+ * On tente d'abord avec le son ; en cas de refus, on repart en muet — la
+ * première touche de l'invité rétablit alors le son. Aucune vidéo ne reste
+ * bloquée sur une image fixe sans explication.
+ */
+function startPreviewPlayback() {
+  el.previewVideo.muted = false;
+  el.previewVideo.play()
+    .then(() => { state.previewMuted = false; })
+    .catch(() => {
+      el.previewVideo.muted = true;
+      state.previewMuted = true;
+      el.previewVideo.play()
+        .then(() => announce('Touchez la vidéo pour activer le son.'))
+        .catch(() => announce('Touchez la vidéo pour la lire.'));
+    });
+}
+
+/* Progression de lecture : remplace les contrôles natifs, qui masquaient
+   le filtre sur le tiers bas de l'écran. */
+el.previewVideo.addEventListener('timeupdate', () => {
+  const d = el.previewVideo.duration;
+  if (!Number.isFinite(d) || d <= 0) { el.playLine.hidden = true; return; }
+  el.playLine.hidden = false;
+  el.playLineFill.style.width =
+    Math.min(100, (el.previewVideo.currentTime / d) * 100).toFixed(2) + '%';
+});
 
 /* Glissement horizontal sur le média pour changer de filtre. */
 (function enableSwipe() {
@@ -1189,8 +1451,17 @@ function goToPreview() {
        qui masqueraient le filtre. */
     if (Math.abs(dx) < 12 && Math.abs(dy) < 12) {
       if (state.mediaType === 'video' && !el.previewVideo.hidden) {
-        if (el.previewVideo.paused) el.previewVideo.play().catch(() => {});
-        else el.previewVideo.pause();
+        /* Première touche après une lecture automatique muette : on rend le son. */
+        if (state.previewMuted) {
+          state.previewMuted = false;
+          el.previewVideo.muted = false;
+          el.previewVideo.play().catch(() => {});
+          announce('Son activé.');
+        } else if (el.previewVideo.paused) {
+          el.previewVideo.play().catch(() => {});
+        } else {
+          el.previewVideo.pause();
+        }
       }
       return;
     }
@@ -1412,11 +1683,29 @@ async function burnFilterIntoVideo(blob, filterSrc, onProgress) {
    « Enregistrer » et « Envoyer ». */
 let finalCache = { key: null, blob: null, burned: false };
 
+/*
+ * Dès que l'invité s'arrête sur un filtre, la photo finale est composée en
+ * silence. « Enregistrer » et « Envoyer » deviennent alors instantanés au
+ * lieu de faire patienter au moment du clic.
+ */
+let speculativeTimer = null;
+function scheduleSpeculativeRender() {
+  clearTimeout(speculativeTimer);
+  if (state.mediaType !== 'photo' || !state.mediaBlob || state.isBusy) return;
+
+  speculativeTimer = setTimeout(() => {
+    if (state.isBusy || state.isSent) return;
+    const key = finalCacheKey();
+    if (finalCache.key === key && finalCache.blob) return;
+    buildFinalMedia(true).catch(() => {});
+  }, 450);
+}
+
 function finalCacheKey() {
   return [state.mediaType, currentFilter().id, state.mediaBlob && state.mediaBlob.size].join('|');
 }
 
-async function buildFinalMedia() {
+async function buildFinalMedia(silent) {
   const key = finalCacheKey();
   if (finalCache.key === key && finalCache.blob) {
     return { blob: finalCache.blob, filterBurned: finalCache.burned };
@@ -1429,18 +1718,26 @@ async function buildFinalMedia() {
   if (!src) {
     result = { blob: state.mediaBlob, filterBurned: false };
   } else if (state.mediaType === 'photo') {
-    setWorking(true, 'Application du filtre…', 0.4, false);
+    if (!silent) setWorking(true, 'Application du filtre…', 0.4, false);
     try {
       result = { blob: await burnFilterIntoPhoto(state.mediaBlob, src), filterBurned: true };
     } catch (err) {
       console.error('[final] filtre photo :', err);
-      toast("Le filtre n'a pas pu être appliqué à la photo.");
+      if (!silent) toast("Le filtre n'a pas pu être appliqué à la photo.");
       result = { blob: state.mediaBlob, filterBurned: false };
     }
+    if (!silent) setWorking(false);
+  } else if (silent) {
+    /* On ne réencode jamais une vidéo en tâche de fond : le traitement dure
+       le temps de la vidéo et entrerait en conflit avec sa lecture. */
+    return null;
   } else if (!canBurnVideoFilter()) {
     result = { blob: state.mediaBlob, filterBurned: false };
   } else {
     state.burnCancelled = false;
+    /* L'aperçu est mis en pause : deux vidéos qui lisent en même temps
+       ralentissent le réencodage et sont interdites sur certains iPhone. */
+    try { el.previewVideo.pause(); } catch (e) {}
     setWorking(true, 'Incrustation du filtre dans la vidéo…', 0, true);
 
     const burned = await burnFilterIntoVideo(state.mediaBlob, src, (p) => {
@@ -1572,6 +1869,89 @@ function postMedia(url, body) {
   });
 }
 
+/* ═══════════ FILE D'ATTENTE HORS LIGNE ═══════════
+   Le réseau d'une salle de réception est capricieux. Tout souvenir est
+   donc écrit sur l'appareil AVANT d'être envoyé, puis supprimé de la file
+   seulement une fois la confirmation du serveur reçue. En cas de coupure,
+   il repart automatiquement au retour du réseau ou au prochain chargement.
+   Aucun souvenir n'est perdu, et l'invité n'a rien à faire.
+   ═══════════════════════════════════════════════ */
+
+const DB_NAME = 'livre-souvenirs';
+const DB_STORE = 'file-attente';
+const QUEUE_MAX_ITEMS = 5;
+const QUEUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function openQueueDb() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error('IndexedDB indisponible.'));
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(DB_STORE)) {
+        db.createObjectStore(DB_STORE, { keyPath: 'uploadId' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function queueTransaction(mode, run) {
+  return openQueueDb().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, mode);
+    const store = tx.objectStore(DB_STORE);
+    const request = run(store);
+    tx.oncomplete = () => { db.close(); resolve(request ? request.result : undefined); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  }));
+}
+
+const queuePut    = (item) => queueTransaction('readwrite', (s) => s.put(item));
+const queueDelete = (id)   => queueTransaction('readwrite', (s) => s.delete(id));
+const queueAll    = ()     => queueTransaction('readonly',  (s) => s.getAll());
+
+async function queueTrim() {
+  try {
+    const items = (await queueAll()) || [];
+    const now = Date.now();
+    const stale = items.filter((i) => now - (i.createdAt || 0) > QUEUE_MAX_AGE_MS);
+    for (const item of stale) await queueDelete(item.uploadId);
+
+    const fresh = items
+      .filter((i) => stale.indexOf(i) === -1)
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    for (const item of fresh.slice(QUEUE_MAX_ITEMS)) await queueDelete(item.uploadId);
+  } catch (err) {
+    console.warn('[file] nettoyage impossible :', err);
+  }
+}
+
+/* Une seule interrogation de statut, utilisée avant tout renvoi :
+   si le souvenir est déjà arrivé, on ne le renvoie pas en double. */
+function checkStatusOnce(uploadId, timeoutMs) {
+  return new Promise((resolve) => {
+    const callbackName = 'lpchk' + Math.random().toString(36).slice(2, 10);
+    const script = document.createElement('script');
+    let settled = false;
+
+    const cleanup = () => {
+      try { delete window[callbackName]; } catch (e) { window[callbackName] = undefined; }
+      if (script.parentNode) script.parentNode.removeChild(script);
+    };
+    const finish = (value) => { if (settled) return; settled = true; cleanup(); resolve(value); };
+
+    window[callbackName] = finish;
+    script.onerror = () => finish(null);
+    script.src = CONFIG.API_URL +
+      '?action=status&uploadId=' + encodeURIComponent(uploadId) +
+      '&prefix=' + callbackName + '&_=' + Date.now();
+
+    document.head.appendChild(script);
+    setTimeout(() => finish(null), timeoutMs || 6000);
+  });
+}
+
 function pollUploadStatus(uploadId, onTick) {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
@@ -1582,6 +1962,16 @@ function pollUploadStatus(uploadId, onTick) {
 
     function request() {
       if (stopped) return;
+
+      /* Connexion perdue en cours de route : on rend la main immédiatement
+         plutôt que de faire patienter quatre minutes. */
+      if (!navigator.onLine) {
+        stopped = true;
+        const error = new Error('Réseau indisponible.');
+        error.network = true;
+        return reject(error);
+      }
+
       if (Date.now() - startedAt > CONFIG.UPLOAD_TIMEOUT_MS) {
         stopped = true;
         return reject(new Error('TIMEOUT'));
@@ -1637,6 +2027,114 @@ function pollUploadStatus(uploadId, onTick) {
   });
 }
 
+/* Erreurs définitives : inutile de conserver le souvenir dans la file,
+   un renvoi échouerait exactement de la même façon. */
+function isPermanentError(message) {
+  return /taille maximale|limite d'envoi|non pris en charge|non autorisé|durée|vide|Extension/i
+    .test(String(message || ''));
+}
+
+/* Envoi d'un élément de la file. Résout avec le statut du serveur,
+   rejette si l'envoi n'a pas pu être confirmé. */
+async function attemptSend(item, options) {
+  const interactive = !!(options && options.interactive);
+
+  /* Le souvenir est-il déjà arrivé lors d'une tentative précédente ?
+     Sans ce contrôle, un renvoi créerait un doublon dans Drive. */
+  if (item.attempts > 0) {
+    const known = await checkStatusOnce(item.uploadId, 6000);
+    if (known && known.status === 'COMPLETED') return known;
+    if (known && known.status === 'FAILED' && isPermanentError(known.error)) {
+      const error = new Error(known.error);
+      error.permanent = true;
+      throw error;
+    }
+  }
+
+  if (interactive) setWorking(true, 'Préparation de votre souvenir…', 0.12, false);
+  const blob = new Blob([item.bytes], { type: item.mimeType });
+  const mediaBase64 = await blobToBase64(blob);
+
+  const payload = JSON.stringify({
+    uploadId: item.uploadId,
+    mediaType: item.mediaType,
+    mimeType: item.mimeType,
+    mediaBase64: mediaBase64,
+    duration: item.duration,
+    guestName: item.guestName,
+    message: item.message,
+    filterId: item.filterId,
+    orientation: item.orientation,
+    filename: item.filename,
+    filterBurned: item.filterBurned
+  });
+
+  if (interactive) {
+    setWorking(true, 'Envoi aux mariés… (' + formatBytes(item.size) + ')', null, false, true);
+  }
+
+  const response = await postMedia(CONFIG.API_URL, payload);
+
+  /* Si la requête a échoué ALORS QUE l'appareil est hors ligne, inutile
+     d'interroger le statut pendant des minutes : on abandonne tout de suite
+     et le souvenir reste en file. Quand l'appareil est en ligne, un échec
+     peut n'être qu'un blocage CORS : seule la consultation du statut tranche. */
+  if (!response.ok && !navigator.onLine) {
+    const error = new Error('Réseau indisponible.');
+    error.network = true;
+    throw error;
+  }
+
+  if (interactive) setWorking(true, 'Enregistrement dans l’album…', 0.85, false, false);
+
+  return pollUploadStatus(item.uploadId);
+}
+
+let queueRunning = false;
+
+/* Reprise silencieuse : au chargement, au retour du réseau, ou au retour
+   sur l'onglet. L'invité n'a aucune action à faire. */
+async function processQueue(reason) {
+  if (queueRunning || !navigator.onLine) return;
+
+  let items;
+  try { items = (await queueAll()) || []; }
+  catch (err) { return; }
+  if (!items.length) return;
+
+  queueRunning = true;
+  console.info('[file] reprise de', items.length, 'souvenir(s) ·', reason);
+
+  let sent = 0;
+  for (const item of items) {
+    try {
+      item.attempts = (item.attempts || 0) + 1;
+      await queuePut(item);
+
+      await attemptSend(item, { interactive: false });
+      await queueDelete(item.uploadId);
+      sent++;
+    } catch (err) {
+      if (err && err.permanent) {
+        await queueDelete(item.uploadId);
+        console.warn('[file] souvenir abandonné (erreur définitive) :', err.message);
+      } else {
+        console.info('[file] renvoi encore impossible, souvenir conservé :',
+                     err && err.message);
+        break;   /* réseau toujours indisponible : inutile d'insister */
+      }
+    }
+  }
+
+  queueRunning = false;
+
+  if (sent > 0) {
+    toast(sent === 1
+      ? 'Votre souvenir en attente vient d’être envoyé aux mariés.'
+      : sent + ' souvenirs en attente viennent d’être envoyés aux mariés.', 'success');
+  }
+}
+
 el.btnSend.addEventListener('click', async () => {
   if (!state.mediaBlob || state.isBusy) return;
   if (state.isSent) { toast('Ce souvenir a déjà été envoyé.'); return; }
@@ -1646,7 +2144,6 @@ el.btnSend.addEventListener('click', async () => {
   state.message = el.captionInput.value.trim();
 
   const filter = currentFilter();
-  let uploadId = newUploadId();
 
   try {
     const { blob, filterBurned } = await buildFinalMedia();
@@ -1676,37 +2173,38 @@ el.btnSend.addEventListener('click', async () => {
       throw new Error('La durée de la vidéo est invalide (' + state.videoDuration + ' s).');
     }
 
-    console.info('[upload]', {
-      uploadId, mediaType: state.mediaType, mimeType: mime,
-      size: blob.size, sizeLabel: formatBytes(blob.size),
-      duration: state.videoDuration, filterId: filter.id, filterBurned
-    });
-
-    setWorking(true, 'Préparation de votre souvenir…', 0.12, false);
-    const mediaBase64 = await blobToBase64(blob);
-
-    const payload = JSON.stringify({
-      uploadId: uploadId,
+    const item = {
+      uploadId: newUploadId(),
+      bytes: await blobToArrayBuffer(blob),
+      size: blob.size,
       mediaType: state.mediaType,
       mimeType: mime,
-      mediaBase64: mediaBase64,
       duration: state.mediaType === 'video' ? state.videoDuration : 0,
       guestName: state.guestName,
       message: state.message,
       filterId: filter.id,
       orientation: state.mediaHeight >= state.mediaWidth ? 'portrait' : 'landscape',
       filename: buildFileName(blob.type),
-      filterBurned: filterBurned
+      filterBurned: filterBurned,
+      createdAt: Date.now(),
+      attempts: 0
+    };
+
+    console.info('[upload]', {
+      uploadId: item.uploadId, mediaType: item.mediaType, mimeType: item.mimeType,
+      size: blob.size, sizeLabel: formatBytes(blob.size),
+      duration: item.duration, filterId: item.filterId, filterBurned
     });
 
-    setWorking(true, 'Envoi aux mariés… (' + formatBytes(blob.size) + ')', null, false, true);
+    /* Écrit sur l'appareil AVANT l'envoi : même si le réseau lâche
+       maintenant, le souvenir est déjà à l'abri. */
+    let queued = false;
+    try { await queuePut(item); queued = true; }
+    catch (err) { console.warn('[file] stockage local indisponible :', err); }
 
-    const response = await postMedia(CONFIG.API_URL, payload);
-    if (response.data && response.data.uploadId) uploadId = response.data.uploadId;
+    const result = await attemptSend(item, { interactive: true });
 
-    setWorking(true, 'Enregistrement dans l’album…', 0.85, false, false);
-
-    const result = await pollUploadStatus(uploadId);
+    if (queued) { try { await queueDelete(item.uploadId); } catch (e) {} }
 
     state.isSent = true;
     setWorking(false);
@@ -1719,12 +2217,16 @@ el.btnSend.addEventListener('click', async () => {
     setWorking(false);
     console.error('[upload] échec :', err, err && err.details);
 
-    if (err && err.message === 'TIMEOUT') {
-      toast("Aucune confirmation reçue du serveur. Le souvenir n'est peut-être pas enregistré. " +
-            'Vérifiez votre connexion puis réessayez.');
+    const message = err && err.message ? err.message : 'erreur inconnue';
+
+    if (isPermanentError(message) || (err && err.permanent)) {
+      /* Rien à réessayer : l'invité doit agir. */
+      toast("L'envoi a échoué : " + message);
     } else {
-      toast("L'envoi a échoué : " + (err && err.message ? err.message : 'erreur inconnue') +
-            ' Vérifiez votre connexion puis réessayez.');
+      /* Réseau ou serveur : le souvenir reste en file et repartira seul. */
+      toast('Réseau indisponible. Votre souvenir est conservé sur votre téléphone ' +
+            'et sera envoyé automatiquement dès le retour de la connexion. ' +
+            'Vous pouvez fermer cette page.');
     }
   } finally {
     if (state.activePoll) { state.activePoll.stop(); state.activePoll = null; }
@@ -1734,12 +2236,31 @@ el.btnSend.addEventListener('click', async () => {
   }
 });
 
+window.addEventListener('online', () => processQueue('retour du réseau'));
+
 
 /* ───────────────────────── ACCUEIL & CYCLE DE VIE ───────────────────────── */
+
+/* Le prénom est mémorisé sur l'appareil : un invité qui laisse plusieurs
+   souvenirs dans la soirée ne le retape jamais. Rien d'autre n'est conservé. */
+const NAME_KEY = 'livre-souvenirs.prenom';
+
+function rememberGuestName(name) {
+  try {
+    if (name) localStorage.setItem(NAME_KEY, name);
+    else localStorage.removeItem(NAME_KEY);
+  } catch (e) { /* navigation privée : sans conséquence */ }
+}
+
+function recallGuestName() {
+  try { return localStorage.getItem(NAME_KEY) || ''; }
+  catch (e) { return ''; }
+}
 
 el.btnStart.addEventListener('click', async () => {
   state.guestName = el.nameInput.value.trim();
   state.message = el.messageInput.value.trim();
+  rememberGuestName(state.guestName);
   showScreen('capture');
   setCaptureMode('photo');
   await startCamera();
@@ -1782,13 +2303,16 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     if (state.isRecording) stopRecording();
     if (el.screenCapture.classList.contains('is-active')) stopAllStreams();
-  } else if (el.screenCapture.classList.contains('is-active') && !state.videoStream) {
-    startCamera();
+  } else {
+    if (el.screenCapture.classList.contains('is-active') && !state.videoStream) startCamera();
+    processQueue('retour sur la page');
   }
 });
 
 window.addEventListener('pagehide', () => {
   stopAllStreams();
+  releaseWakeLock();
+  clearTimeout(speculativeTimer);
   clearInterval(state.recordTimerId);
   revokePreviewURL();
   if (state.activePoll) state.activePoll.stop();
@@ -1806,8 +2330,16 @@ window.addEventListener('unhandledrejection', (e) => console.error('[promise]', 
       location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
     toast('La caméra nécessite une connexion sécurisée (HTTPS).');
   }
+  syncViewportHeight();
+
+  const knownName = recallGuestName();
+  if (knownName && !el.nameInput.value) el.nameInput.value = knownName;
+
   await loadFilters();
   setCaptureMode('photo');
   showScreen('home');
   console.info('[app] prêt · filtres chargés :', state.filters.length);
+
+  /* Souvenirs restés en file lors d'une précédente visite. */
+  queueTrim().then(() => processQueue('chargement de la page'));
 })();

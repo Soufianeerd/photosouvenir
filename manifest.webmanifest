@@ -1,0 +1,28 @@
+{
+  "name": "Livre de Souvenirs — Salma & Soufiane",
+  "short_name": "Souvenirs S&S",
+  "description": "Laissez une photo ou une vidéo souvenir aux mariés.",
+  "lang": "fr",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F9F7F2",
+  "theme_color": "#5D262C",
+  "categories": ["photo", "lifestyle"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Originaux des filtres, sauvegardés par tools/optimize-filters.sh
+filters/portrait/_originaux/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

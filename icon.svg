@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Livre de Souvenirs — Salma & Soufiane">
+  <rect width="512" height="512" fill="#5D262C"/>
+
+  <!-- Cadre doré, dans l'esprit de la papeterie du mariage -->
+  <rect x="64" y="64" width="384" height="384" rx="6"
+        fill="none" stroke="#C9A227" stroke-width="3" opacity="0.55"/>
+  <rect x="78" y="78" width="356" height="356" rx="4"
+        fill="none" stroke="#C9A227" stroke-width="1.5" opacity="0.35"/>
+
+  <!-- Monogramme -->
+  <text x="256" y="268"
+        font-family="Georgia, 'Times New Roman', serif"
+        font-size="150" font-style="italic" fill="#F9F7F2"
+        text-anchor="middle">S</text>
+  <text x="256" y="268"
+        font-family="Georgia, 'Times New Roman', serif"
+        font-size="150" font-style="italic" fill="#C9A227"
+        text-anchor="middle" opacity="0.9" dx="54" dy="34">S</text>
+
+  <!-- Ornement -->
+  <line x1="150" y1="316" x2="230" y2="316" stroke="#C9A227" stroke-width="1.5" opacity="0.6"/>
+  <line x1="282" y1="316" x2="362" y2="316" stroke="#C9A227" stroke-width="1.5" opacity="0.6"/>
+  <circle cx="256" cy="316" r="4" fill="#C9A227" opacity="0.8"/>
+
+  <text x="256" y="368"
+        font-family="Helvetica, Arial, sans-serif"
+        font-size="26" letter-spacing="6" fill="#F9F7F2"
+        text-anchor="middle" opacity="0.75">23.10.2026</text>
+</svg>

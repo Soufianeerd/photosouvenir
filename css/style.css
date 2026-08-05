@@ -199,7 +199,38 @@ body.is-scrollable { overflow: auto; }
   background: #000;
   z-index: 1;
 }
+/* Le miroir et le zoom sont pilotés par app.js via une transformation
+   en ligne, pour que l'aperçu corresponde exactement au recadrage capturé. */
 .stage__media.is-mirrored { transform: scaleX(-1); }
+
+/* Éclair de déclenchement — comme sur un vrai appareil photo. */
+.flash {
+  position: absolute; inset: 0; z-index: 8;
+  background: #fff; opacity: 0; pointer-events: none;
+}
+.flash.is-firing { animation: flashFire 0.28s ease-out; }
+@keyframes flashFire {
+  0%   { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash.is-firing { animation: none; }
+}
+
+/* Progression de lecture de la vidéo, discrète, au ras du bas de l'écran. */
+.playline {
+  position: absolute; z-index: 9;
+  left: 0; right: 0;
+  bottom: calc(var(--safe-b) + 0px);
+  height: 2px;
+  background: rgba(255,255,255,0.18);
+  pointer-events: none;
+}
+.playline[hidden] { display: none; }
+.playline i {
+  display: block; height: 100%; width: 0%;
+  background: var(--gold);
+}
 
 /* Voiles : lisibilité des commandes sans assombrir le média */
 .stage__scrim { position: absolute; left: 0; right: 0; z-index: 5; pointer-events: none; }

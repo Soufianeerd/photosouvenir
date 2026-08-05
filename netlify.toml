@@ -23,6 +23,14 @@
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
 
+# Le service worker ne doit JAMAIS être servi depuis un cache :
+# sans cela, une ancienne version pourrait figer le site après un déploiement.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+    Service-Worker-Allowed = "/"
+
 # CSS et JS : revalidation courte, le site évolue encore.
 [[headers]]
   for = "/css/*"

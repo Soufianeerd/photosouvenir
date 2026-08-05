@@ -22,10 +22,25 @@ livre-photos/
 │   └── portrait/           Images de filtres plein format (PNG transparents)
 ├── Code-livre-photos.gs    Backend Google Apps Script
 ├── netlify.toml            Déploiement statique et en-têtes
+├── sw.js                   Service worker — cache hors ligne
 ├── tools/
-│   └── make-thumbnails.sh  Génération des miniatures de filtres (optionnel)
+│   └── optimize-filters.sh Miniatures et compression des filtres
 └── README.md
 ```
+
+## Optimisations en place
+
+| Optimisation | Effet |
+|---|---|
+| Service worker | À partir du 2ᵉ souvenir, la page et les filtres ne sont plus retéléchargés ; une coupure de wifi ne casse plus rien |
+| `preconnect` vers Apps Script | La poignée de main TLS est payée au chargement, plus au moment de l'envoi |
+| Caméra avant le micro | L'aperçu apparaît sans attendre la seconde autorisation |
+| Préchargement des filtres | Téléchargés aux moments creux pendant que l'invité cadre |
+| Préchauffage du canvas | La vidéo démarre sur une image, jamais sur du noir |
+| Composition anticipée | Le filtre photo est appliqué dès la sélection : « Enregistrer » et « Envoyer » sont instantanés |
+| Capture au format écran | Aucun pixel jamais affiché n'est encodé ni envoyé |
+| Wake Lock | L'écran ne s'éteint pas pendant l'enregistrement |
+| `visualViewport` | Les commandes ne sont jamais rognées par la barre d'adresse iOS |
 
 ---
 
@@ -72,19 +87,22 @@ Tout se pilote depuis `filters/filters.json`. Aucune modification de
 - Les filtres sont dessinés en mode *cover* : ils ne sont jamais étirés ni
   déformés, quelle que soit l'orientation.
 
-### Miniatures
+### Alléger les filtres — à faire avant le jour J
 
-Les filtres plein format pèsent entre 2 et 2,8 Mo. Pour alléger le chargement
-sur une connexion mobile faible :
+Les filtres plein format pèsent 2 à 2,8 Mo chacun, soit plus de 13 Mo. C'est le
+principal facteur de lenteur sur le réseau mobile d'une salle de réception.
 
 ```bash
-bash tools/make-thumbnails.sh
+bash tools/optimize-filters.sh
 ```
 
-Puis renseigner le champ `thumbnail` de chaque filtre dans `filters.json`.
-Sans miniatures, l'application ne télécharge que les filtres proches de la
-sélection courante ; avec miniatures, la bande de filtres devient quasi
-instantanée.
+Le script génère les miniatures dans `filters/thumbnails/` et compresse les PNG
+plein format si `pngquant` est installé (`brew install pngquant`), en
+sauvegardant les originaux dans `filters/portrait/_originaux/`.
+
+**Aucune modification de `filters.json` n'est nécessaire** : `js/app.js`
+cherche automatiquement `filters/thumbnails/filter-<id>.png` et retombe en
+silence sur l'image plein format si elle n'existe pas.
 
 ---
 
