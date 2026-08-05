@@ -56,7 +56,6 @@ const els = {
   metaName: document.getElementById('metaName'),
   metaSize: document.getElementById('metaSize'),
   
-  btnSaveToDevice: document.getElementById('btnSaveToDevice'),
   btnShareNative: document.getElementById('btnShareNative'),
   btnSendToDrive: document.getElementById('btnSendToDrive'),
   btnResetAll: document.getElementById('btnResetAll'),
@@ -212,12 +211,12 @@ function startRecording() {
   recordedChunks = [];
   state.recordStartTime = Date.now(); // Track start time for accurate duration
   
-  // Configurer le MediaRecorder avec une forte compression (1.5 Mbps)
-  const options = { mimeType: 'video/mp4', videoBitsPerSecond: 1500000 };
+  // Configurer le MediaRecorder avec une forte compression (1 Mbps)
+  const options = { mimeType: 'video/mp4', videoBitsPerSecond: 1000000 };
   try {
     mediaRecorder = new MediaRecorder(state.currentStream, options);
   } catch (e) {
-    mediaRecorder = new MediaRecorder(state.currentStream, { videoBitsPerSecond: 1500000 }); // fallback mimeType
+    mediaRecorder = new MediaRecorder(state.currentStream, { videoBitsPerSecond: 1000000 }); // fallback mimeType
   }
   
   mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
@@ -244,20 +243,27 @@ function startRecording() {
   els.videoTimer.classList.add('visible');
   els.videoTimer.classList.remove('warning');
   
-  state.recordTimer = setInterval(() => {
+  state.recordTimerInterval = setInterval(() => {
     const elapsed = Math.floor((Date.now() - state.recordStartTime) / 1000);
-    const remaining = CONFIG.MAX_VIDEO_DURATION - elapsed;
-    els.videoTimer.textContent = `00:${remaining < 10 ? '0'+remaining : remaining}`;
+    const remaining = 60 - elapsed;
     
-    if (remaining <= 10) els.videoTimer.classList.add('warning');
-    if (remaining <= 0) stopRecording();
+    if(remaining <= 0) {
+      stopRecording();
+      return;
+    }
+    
+    if(remaining <= 10) els.videoTimer.classList.add('warning');
+    
+    const m = Math.floor(elapsed / 60).toString().padStart(2, '0');
+    const s = (elapsed % 60).toString().padStart(2, '0');
+    els.videoTimer.textContent = `${m}:${s}`;
   }, 1000);
 }
 
 function stopRecording() {
   if (!state.isRecording) return;
   mediaRecorder.stop();
-  clearInterval(state.recordTimer);
+  clearInterval(state.recordTimerInterval);
   state.isRecording = false;
   els.btnCaptureVideo.classList.remove('recording');
   els.videoTimer.classList.remove('visible');
@@ -298,31 +304,30 @@ function getFileName() {
   return `souvenir_${namePart}_${Date.now()}.${ext}`;
 }
 
-els.btnSaveToDevice.addEventListener('click', () => {
+// PARTAGE NATIF / SAUVEGARDE
+els.btnShareNative?.addEventListener('click', async () => {
   if (!state.mediaBlob) return;
-  const a = document.createElement('a');
-  a.href = state.previewURL;
-  a.download = getFileName();
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-});
-
-els.btnShareNative.addEventListener('click', async () => {
-  if (!state.mediaBlob) return;
-  const file = new File([state.mediaBlob], getFileName(), { type: state.mediaBlob.type });
-  if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+  const fileName = getFileName();
+  const file = new File([state.mediaBlob], fileName, { type: state.mediaBlob.type });
+  
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
       await navigator.share({
         files: [file],
-        title: 'Souvenir Mariage',
-        text: `Souvenir de ${state.userName} pour Soufiane & Salma`
+        title: 'Mon souvenir',
+        text: 'Voici mon souvenir pour le livre d\'or !'
       });
-    } catch (err) {
-      console.log('Partage annulé ou erreur', err);
+    } catch (e) {
+      console.log('Partage annulé ou échoué:', e);
     }
   } else {
-    showAlert("Le partage natif n'est pas supporté sur votre appareil. Utilisez le bouton Enregistrer.");
+    // Fallback : lien de téléchargement standard si Web Share API non supportée
+    const url = URL.createObjectURL(state.mediaBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 });
 

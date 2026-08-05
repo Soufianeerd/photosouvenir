@@ -188,6 +188,15 @@ body.fullscreen-mode .page-footer { display: none; }
 /* ── ALERTE ── */
 .alert { display: none; background: #fff0f0; border: 1px solid rgba(192,57,43,0.18); border-radius: var(--r); padding: 0.85rem 1rem; margin-bottom: 1.25rem; font-family: var(--font-sans); font-size: 0.72rem; font-weight: 300; color: #8b1f1f; line-height: 1.5; animation: stepIn 0.3s var(--ease) both; }
 .alert.visible { display: block; }
+body.fullscreen-mode .alert {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  right: 1rem;
+  z-index: 10000;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+  margin-bottom: 0;
+}
 
 /* ── FOOTER ── */
 .page-footer { text-align: center; padding: 1.75rem 0 0; margin-top: auto; }
@@ -208,13 +217,13 @@ body.fullscreen-mode .page-footer { display: none; }
 
 /* ═══════════════════ CAMÉRA (FULLSCREEN) ═══════════════════ */
 .camera-container {
-  position: absolute;
+  position: fixed;
   inset: 0;
   width: 100vw;
   height: 100dvh;
   background: #000;
   overflow: hidden;
-  z-index: 10;
+  z-index: 9999;
 }
 
 .camera-feed {
@@ -337,12 +346,12 @@ body.fullscreen-mode .page-footer { display: none; }
 
 /* ═══════════════════ APERÇU (FULLSCREEN) ═══════════════════ */
 .preview-wrap {
-  position: absolute;
+  position: fixed;
   inset: 0;
   width: 100vw;
   height: 100dvh;
   background: #000;
-  z-index: 10;
+  z-index: 9999;
   display: flex;
   flex-direction: column;
 }
