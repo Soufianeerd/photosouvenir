@@ -99,23 +99,43 @@ version n'est pas déployée :
 
 ### Vérifier la version réellement en ligne
 
+Ouvrir `<URL_DU_DEPLOIEMENT>?action=health` et lire la réponse :
+
+| Réponse | Signification |
+|---|---|
+| Texte brut, sans JSON | Code très ancien déployé |
+| JSON **sans** champ `version` | Version antérieure au 5 août 2026 |
+| JSON avec `"version": "2026.08.05-1"` | Version actuelle bien en ligne |
+
+Si `version` ne correspond pas à `BACKEND_VERSION` en haut de
+`Code-livre-photos.gs`, le déploiement n'a pas été mis à jour.
+
+### Dossier Google Drive — vérifié
+
+`DRIVE_MAIN_FOLDER_ID = '12W1gstTtPzL4JFVq6MQWzvDa8FpbBy4b'` correspond bien au
+dossier **« Livre Photos Souvenirs — Mariage S&S 📸 »**.
+
+L'identifiant `1FsZyN4zT_HkVbZcw-G6gil6tYug26IuY`, longtemps pris pour un
+dossier principal concurrent, est en réalité le **sous-dossier `Vidéos`** situé
+à l'intérieur de ce dossier. Il n'y a donc jamais eu de conflit : la
+configuration actuelle est correcte et ne doit pas être modifiée.
+
+Pour le revérifier à tout moment, exécuter `verifyDriveTarget()` depuis
+l'éditeur Apps Script et lire le journal : compte exécutant, nom et URL du
+dossier principal, URL et nombre de fichiers de `Photos` et `Vidéos`.
+
+### Ranger les anciens souvenirs
+
+Les envois antérieurs à la mise en place des sous-dossiers se trouvent à la
+racine du dossier principal. Pour les classer, exécuter depuis l'éditeur :
+
+```javascript
+tidyLegacyFiles(true)   // simulation : journalise sans rien déplacer
+tidyLegacyFiles()       // déplacement réel vers Photos / Vidéos
 ```
-<URL_DU_DEPLOIEMENT>?action=health
-```
 
-Comparer le champ `version` avec la constante `BACKEND_VERSION` en haut de
-`Code-livre-photos.gs`. Si les deux diffèrent, le déploiement n'a pas été mis
-à jour.
-
-### Vérifier le dossier Google Drive réellement utilisé
-
-Exécuter manuellement la fonction `verifyDriveTarget()` depuis l'éditeur Apps
-Script, puis lire le journal. Elle affiche le compte exécutant, le nom et
-l'URL du dossier principal, ainsi que les URL des sous-dossiers `Photos` et
-`Vidéos` et leur nombre de fichiers.
-
-Si le dossier affiché n'est pas le bon album, modifier `DRIVE_MAIN_FOLDER_ID`
-en haut du fichier, enregistrer, puis **redéployer une nouvelle version**.
+La fonction ne supprime rien, ne touche pas aux dossiers et ignore tout
+fichier qui n'est ni une image ni une vidéo.
 
 ### Limites appliquées
 

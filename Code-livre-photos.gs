@@ -37,15 +37,20 @@
 const BACKEND_VERSION = '2026.08.05-1';
 
 /**
- * Dossier Drive principal.
+ * Dossier Drive principal — VÉRIFIÉ le 5 août 2026 :
+ *   12W1gstTtPzL4JFVq6MQWzvDa8FpbBy4b
+ *     = « Livre Photos Souvenirs — Mariage S&S 📸 »
+ *     créé le 30/03/2026, propriétaire soufiane.erd@gmail.com,
+ *     lui-même rangé dans « Livre d'Or Audio — Mariage S&S 🎙️ ».
  *
- * Deux identifiants ont circulé dans l'historique du projet :
- *   - 12W1gstTtPzL4JFVq6MQWzvDa8FpbBy4b  (valeur présente dans ce fichier)
- *   - 1FsZyN4zT_HkVbZcw-G6gil6tYug26IuY  (mentionné comme dossier attendu)
+ * L'identifiant 1FsZyN4zT_HkVbZcw-G6gil6tYug26IuY qui circulait dans
+ * l'historique du projet N'EST PAS un dossier principal concurrent :
+ * c'est le sous-dossier « Vidéos » situé À L'INTÉRIEUR du dossier ci-dessus
+ * (créé le 04/08/2026 par setupDrive()). Il n'y a donc aucun conflit :
+ * la valeur ci-dessous est la bonne, il ne faut pas la remplacer.
  *
- * Exécuter verifyDriveTarget() affiche le NOM et l'URL du dossier réellement
- * ciblé. Si ce n'est pas le bon album, remplacer la valeur ci-dessous,
- * enregistrer, puis redéployer une nouvelle version.
+ * En cas de doute, exécuter verifyDriveTarget() : la fonction journalise le
+ * nom et l'URL du dossier réellement ciblé, ainsi que ceux de ses sous-dossiers.
  */
 const DRIVE_MAIN_FOLDER_ID = '12W1gstTtPzL4JFVq6MQWzvDa8FpbBy4b';
 
@@ -687,6 +692,89 @@ function verifyDriveTarget() {
 
   Logger.log('Photos → ' + photosFolder.getUrl() + ' (fichiers : ' + countFiles_(photosFolder) + ')');
   Logger.log('Vidéos → ' + videosFolder.getUrl() + ' (fichiers : ' + countFiles_(videosFolder) + ')');
+}
+
+
+/**
+ * RANGEMENT DES ANCIENS FICHIERS — à exécuter manuellement, une seule fois.
+ *
+ * Les souvenirs envoyés avant la mise en place des sous-dossiers se trouvent
+ * à la racine du dossier principal. Cette fonction les déplace dans « Photos »
+ * ou « Vidéos » selon leur type réel.
+ *
+ * Sûre par conception : ne touche jamais aux dossiers, ne supprime rien,
+ * et ignore tout fichier qui n'est ni une image ni une vidéo.
+ *
+ * Le menu « Exécuter » ne permet pas de passer d'argument : utiliser les deux
+ * fonctions sans paramètre définies juste en dessous.
+ */
+
+/**
+ * ÉTAPE 1 — SIMULATION. Ne déplace rien, journalise seulement ce qui serait fait.
+ * Sélectionner « rangerAnciensFichiers_Simulation » dans le menu déroulant,
+ * puis cliquer sur Exécuter.
+ */
+function rangerAnciensFichiers_Simulation() {
+  tidyLegacyFiles(true);
+}
+
+/**
+ * ÉTAPE 2 — RANGEMENT RÉEL. À exécuter après avoir vérifié la simulation.
+ * Sélectionner « rangerAnciensFichiers_Reel » dans le menu déroulant,
+ * puis cliquer sur Exécuter.
+ */
+function rangerAnciensFichiers_Reel() {
+  tidyLegacyFiles(false);
+}
+
+function tidyLegacyFiles(dryRun) {
+  const simulation = dryRun === true;
+  const mainFolder = DriveApp.getFolderById(DRIVE_MAIN_FOLDER_ID);
+  const photosFolder = getOrCreateFolder_(mainFolder, PHOTOS_FOLDER_NAME);
+  const videosFolder = getOrCreateFolder_(mainFolder, VIDEOS_FOLDER_NAME);
+
+  Logger.log(simulation
+    ? '=== SIMULATION : aucun fichier ne sera déplacé ==='
+    : '=== RANGEMENT RÉEL ===');
+  Logger.log('Dossier : ' + mainFolder.getName());
+
+  const files = mainFolder.getFiles();
+  let movedPhotos = 0;
+  let movedVideos = 0;
+  let ignored = 0;
+
+  while (files.hasNext()) {
+    const file = files.next();
+    const mime = String(file.getMimeType() || '');
+
+    let destination = null;
+    if (mime.indexOf('image/') === 0) destination = photosFolder;
+    else if (mime.indexOf('video/') === 0) destination = videosFolder;
+
+    if (!destination) {
+      ignored++;
+      Logger.log('IGNORÉ   ' + file.getName() + ' (' + mime + ')');
+      continue;
+    }
+
+    if (!simulation) {
+      destination.addFile(file);
+      mainFolder.removeFile(file);
+    }
+
+    if (destination === photosFolder) movedPhotos++;
+    else movedVideos++;
+
+    Logger.log(
+      (simulation ? 'À DÉPLACER ' : 'DÉPLACÉ    ') +
+      file.getName() + ' → ' + destination.getName()
+    );
+  }
+
+  Logger.log('---');
+  Logger.log('Photos : ' + movedPhotos + ' · Vidéos : ' + movedVideos + ' · ignorés : ' + ignored);
+  Logger.log('Photos contient désormais ' + countFiles_(photosFolder) + ' fichier(s).');
+  Logger.log('Vidéos contient désormais ' + countFiles_(videosFolder) + ' fichier(s).');
 }
 
 
