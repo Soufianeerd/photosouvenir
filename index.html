@@ -14,7 +14,10 @@
   <link rel="preconnect" href="https://script.google.com" crossorigin />
   <link rel="dns-prefetch" href="https://script.google.com" />
 
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <!-- Great Vibes : la calligraphie des filtres. Les cadres étant composés
+       à la volée dans un canvas, la police doit être réellement chargée
+       avant le premier rendu (voir FilterRender.ensureFonts). -->
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Great+Vibes&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="css/style.css" />
   <link rel="preload" as="fetch" href="filters/filters.json" crossorigin="anonymous" />
@@ -154,7 +157,10 @@
     <div class="mediastage__box" id="mediaBox">
       <img class="mediastage__media" id="previewImg" alt="Aperçu de votre photo" hidden />
       <video class="mediastage__media" id="previewVideo" playsinline loop hidden></video>
-      <img class="mediastage__filter" id="filterOverlay" alt="" aria-hidden="true" hidden />
+      <!-- Le filtre est un canvas, et non une image : il est recomposé aux
+           dimensions exactes de l'écran, donc il en cadre toujours les
+           quatre bords, sur n'importe quel format d'appareil. -->
+      <canvas class="mediastage__filter" id="filterOverlay" aria-hidden="true" hidden></canvas>
     </div>
   </div>
 
@@ -200,7 +206,9 @@
       <div class="spinner" aria-hidden="true"></div>
       <p class="working__text" id="workingText">Préparation de votre souvenir…</p>
       <div class="working__bar"><div class="working__fill" id="workingFill"></div></div>
-      <button class="btn btn--ghost-light" id="btnWorkingCancel" type="button" hidden>Passer cette étape</button>
+      <!-- Libellé remplacé à l'exécution : « Passer cette étape » pendant
+           l'incrustation du filtre, « Annuler l'envoi » pendant l'envoi. -->
+      <button class="btn btn--ghost-light" id="btnWorkingCancel" type="button" hidden>Annuler l'envoi</button>
     </div>
   </div>
 </section>
@@ -224,6 +232,7 @@
   </div>
 </main>
 
+<script src="js/filter-render.js" defer></script>
 <script src="js/app.js" defer></script>
 
 <script>

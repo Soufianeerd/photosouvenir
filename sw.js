@@ -19,7 +19,10 @@
      script.google.com — n'est jamais intercepté.
    ═══════════════════════════════════════════════════════════════ */
 
-const VERSION = 'livre-souvenirs-v1';
+/* v2 : les filtres sont désormais composés à la volée à partir de pièces
+   légères (filters/parts). Le changement de version purge automatiquement
+   les anciennes images plein format, devenues inutiles. */
+const VERSION = 'livre-souvenirs-v2';
 const SHELL_CACHE = VERSION + '-shell';
 const FILTER_CACHE = VERSION + '-filtres';
 

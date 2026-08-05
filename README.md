@@ -17,9 +17,11 @@ livre-photos/
 ├── index.html              Les quatre écrans (accueil, capture, aperçu, confirmation)
 ├── css/style.css           Styles — accueil élégant, capture et aperçu plein écran
 ├── js/app.js               Toute la logique : caméra, filtres, envoi, accessibilité
+├── js/filter-render.js     Compositeur de filtres — recalcule le cadre au format de l'écran
 ├── filters/
 │   ├── filters.json        Configuration des filtres (source de vérité)
-│   └── portrait/           Images de filtres plein format (PNG transparents)
+│   ├── parts/              Pièces légères : tuiles d'angle et gerbes florales
+│   └── portrait/           Images d'origine, conservées comme matière première
 ├── Code-livre-photos.gs    Backend Google Apps Script
 ├── netlify.toml            Déploiement statique et en-têtes
 ├── sw.js                   Service worker — cache hors ligne
@@ -27,7 +29,7 @@ livre-photos/
 ├── manifest.webmanifest    Manifeste PWA
 ├── icon.svg                Icône de l'application
 ├── tools/
-│   └── optimize-filters.sh Miniatures et compression des filtres
+│   └── build-filter-parts.py  Découpe les pièces de filtre dans les images d'origine
 └── README.md
 ```
 
@@ -56,7 +58,8 @@ récent, un Android d'entrée de gamme.
 | Service worker | À partir du 2ᵉ souvenir, la page et les filtres ne sont plus retéléchargés ; une coupure de wifi ne casse plus rien |
 | `preconnect` vers Apps Script | La poignée de main TLS est payée au chargement, plus au moment de l'envoi |
 | Caméra avant le micro | L'aperçu apparaît sans attendre la seconde autorisation |
-| Préchargement des filtres | Téléchargés aux moments creux pendant que l'invité cadre |
+| Filtres composés à la volée | 12 Mo d'images plein format remplacés par ~480 Ko de pièces, et un cadre qui épouse enfin tous les bords |
+| Préchargement des filtres | Pièces et polices récupérées aux moments creux pendant que l'invité cadre |
 | Préchauffage du canvas | La vidéo démarre sur une image, jamais sur du noir |
 | Composition anticipée | Le filtre photo est appliqué dès la sélection : « Enregistrer » et « Envoyer » sont instantanés |
 | Capture au format écran | Aucun pixel jamais affiché n'est encodé ni envoyé |
@@ -79,51 +82,90 @@ récent, un Android d'entrée de gamme.
 
 ---
 
-## Ajouter ou modifier un filtre
+## Les filtres
 
-Tout se pilote depuis `filters/filters.json`. Aucune modification de
-`js/app.js` n'est nécessaire.
+### Pourquoi ils ne sont plus des images
+
+Un cadre enregistré comme image a un format figé. Les premiers filtres étaient
+des PNG de 1024 × 1536, soit un format 2:3. Un téléphone récent affiche du
+9:19,5 — environ 0,46. Posée en *cover* sur un tel écran, une image en 2:3
+perd 31 % de sa largeur : **les filets latéraux et les ornements d'angle
+sortaient du cadre**, et le filtre ne bordait jamais l'écran.
+
+`js/filter-render.js` recompose donc chaque cadre à la demande, aux dimensions
+exactes de la cible : écran d'aperçu, photo exportée, image de vidéo. Le cadre
+touche toujours les quatre bords, sur n'importe quel appareil, en portrait
+comme en paysage — et l'aperçu est rigoureusement identique au fichier envoyé,
+puisque les deux passent par la même fonction.
+
+Effet secondaire appréciable : les 12 Mo d'images plein format sont remplacés
+par environ 480 Ko réellement téléchargés.
+
+### Ajouter ou modifier un filtre
+
+Tout se pilote depuis `filters/filters.json`. Aucune modification du code n'est
+nécessaire.
 
 ```json
 {
   "id": "mon-nouveau-filtre",
   "name": "Nom affiché",
-  "category": "elegant",
   "active": true,
-  "order": 6,
+  "order": 5,
   "mediaTypes": ["photo", "video"],
-  "portrait": "filters/portrait/filter-mon-nouveau-filtre.png",
-  "landscape": "filters/landscape/filter-mon-nouveau-filtre.png",
-  "thumbnail": "filters/thumbnails/filter-mon-nouveau-filtre.png",
-  "availableFrom": "2026-10-23T00:00:00Z",
-  "availableUntil": "2026-10-24T23:59:59Z"
+
+  "type": "composed",
+  "layout": "bouquet",
+  "corner": "filters/parts/corner-flourish.webp",
+  "cornerScale": 0.235,
+  "bouquet": "filters/parts/bouquet-burgundy.webp",
+  "bouquetWidth": 0.58,
+  "line": { "outer": 49, "inner": 61, "outerWidth": 3.6, "innerWidth": 3.6 },
+  "palette": ["#F6E7B0", "#D3AC33", "#EFD98F", "#B98F1E"],
+  "text": {
+    "monogram": "S & S",
+    "date": "23 OCTOBRE 2026",
+    "tagline": "Vive les mariés"
+  }
 }
 ```
 
-- `portrait`, `landscape` et `thumbnail` sont facultatifs. Sans eux, le chemin
-  `filters/portrait/filter-<id>.png` est utilisé.
-- `active: false` retire un filtre sans supprimer le fichier.
-- L'entrée `none` (« Aucun filtre ») est obligatoire et ajoutée automatiquement
-  si elle manque.
-- Les filtres sont dessinés en mode *cover* : ils ne sont jamais étirés ni
-  déformés, quelle que soit l'orientation.
+| Champ | Rôle |
+|---|---|
+| `layout` | `bouquet` (gerbe en bas à droite, texte en bas à gauche) ou `wedding` (titre en haut, prénoms centrés en bas) |
+| `corner` | Tuile d'angle 240 × 240 px, reproduite et miroitée aux quatre coins |
+| `cornerScale` | Taille de l'angle, en fraction du petit côté de l'écran |
+| `line` | Position et épaisseur des deux filets, exprimées dans le repère de la tuile — elles suivent donc l'échelle de l'angle |
+| `palette` | Quatre tons d'or, du plus clair au plus sombre : c'est le dégradé qui donne l'effet de dorure |
+| `glow` | Halo clair facultatif, à la place du halo sombre par défaut |
+| `text` | `heading`, `names`, `monogram`, `date`, `tagline` — chacun facultatif |
 
-### Alléger les filtres — à faire avant le jour J
+Points à connaître :
 
-Les filtres plein format pèsent 2 à 2,8 Mo chacun, soit plus de 13 Mo. C'est le
-principal facteur de lenteur sur le réseau mobile d'une salle de réception.
+- Le texte **se met tout seul à la bonne taille** : selon le format de l'écran
+  la gerbe remonte plus ou moins haut, et une taille figée finirait par écrire
+  la date par-dessus les roses.
+- Un halo sombre très diffus est ajouté sous l'or. Sans lui, un cadre doré
+  disparaît sur une robe blanche ou un mur clair.
+- Les vignettes de la barre de filtres sont composées sur place : il n'y a plus
+  aucune miniature à régénérer à la main.
+- `active: false` retire un filtre sans supprimer quoi que ce soit.
+- L'entrée `none` (« Aucun filtre ») est ajoutée automatiquement si elle manque.
+- Un ancien filtre image reste utilisable avec `"type": "image"` et
+  `"portrait": "…png"` — il sera simplement recadré en *cover*, avec les
+  limites décrites plus haut.
+
+### Fabriquer de nouvelles pièces
+
+Pour découper une tuile d'angle et une gerbe dans une nouvelle image d'origine,
+déposez-la dans `filters/portrait/`, ajoutez-la aux tables du script, puis :
 
 ```bash
-bash tools/optimize-filters.sh
+python3 tools/build-filter-parts.py
 ```
 
-Le script génère les miniatures dans `filters/thumbnails/` et compresse les PNG
-plein format si `pngquant` est installé (`brew install pngquant`), en
-sauvegardant les originaux dans `filters/portrait/_originaux/`.
-
-**Aucune modification de `filters.json` n'est nécessaire** : `js/app.js`
-cherche automatiquement `filters/thumbnails/filter-<id>.png` et retombe en
-silence sur l'image plein format si elle n'existe pas.
+Le script produit un PNG et un WebP de chaque pièce (le navigateur télécharge
+le WebP, le PNG sert de repli).
 
 ---
 
@@ -256,9 +298,16 @@ Après déploiement, recharger en vidant le cache (ou en navigation privée) pou
   vidéo de 15 s demande environ 15 s de traitement, avec une barre de
   progression et un bouton « Passer cette étape ». Si l'appareil ne le permet
   pas, la vidéo d'origine est conservée et l'interface le dit explicitement.
+- **Interrompre** : deux interruptions bien distinctes, et deux libellés
+  distincts. « Passer cette étape » pendant l'incrustation du filtre conserve
+  la vidéo d'origine et poursuit l'envoi. « Annuler l'envoi » pendant l'envoi
+  interrompt la requête, retire le souvenir de la file d'attente et rend la
+  main à l'invité, qui retrouve son aperçu intact.
 - **Enregistrement dans la galerie iOS** : un site web ne peut pas écrire
   directement dans l'application Photos. Le bouton ouvre la feuille de partage
   native ; c'est l'invité qui choisit « Enregistrer la vidéo ». L'intitulé du
   bouton dit donc « Enregistrer ou partager », et non « Enregistré ».
-- **Poids des filtres** : environ 13 Mo au total en plein format. Voir la
-  section Miniatures ci-dessus.
+- **Formats très inhabituels** : le cadre s'adapte à tout format, mais sur un
+  écran extrêmement allongé la gerbe florale occupe forcément une part plus
+  faible de la hauteur. Le filtre « Or Fin », sans gerbe, reste identique
+  partout.

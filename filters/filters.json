@@ -1,6 +1,6 @@
 {
-  "version": 2,
-  "note": "Ajouter un filtre ici suffit : aucune modification de js/app.js n'est nécessaire. Les champs portrait / landscape / thumbnail sont facultatifs ; sans eux, le chemin filters/portrait/filter-<id>.png est utilisé.",
+  "version": 3,
+  "note": "Les filtres ne sont plus des images figées : ils sont composés à la volée aux dimensions exactes de l'écran (js/filter-render.js), donc ils cadrent toujours l'écran entier, sur n'importe quel appareil. Ajouter un filtre = ajouter un objet ici, sans toucher au code. Champs : layout (bouquet | wedding), corner (tuile d'angle 240x240), bouquet (gerbe d'angle), palette (4 tons d'or), text (monogram, names, date, tagline, heading). Un filtre historique peut encore utiliser type:\"image\" + portrait:\"...png\".",
   "filters": [
     {
       "id": "none",
@@ -8,8 +8,7 @@
       "category": "system",
       "active": true,
       "order": 0,
-      "mediaTypes": ["photo", "video"],
-      "orientations": ["portrait", "landscape"]
+      "mediaTypes": ["photo", "video"]
     },
     {
       "id": "ss-floral-burgundy-01",
@@ -18,11 +17,20 @@
       "active": true,
       "order": 1,
       "mediaTypes": ["photo", "video"],
-      "orientations": ["portrait"],
-      "portrait": "filters/portrait/filter-ss-floral-burgundy-01.png",
-      "thumbnail": "",
-      "fit": "cover",
-      "safeArea": { "top": 0.12, "bottom": 0.18, "left": 0.08, "right": 0.08 }
+      "type": "composed",
+      "layout": "bouquet",
+      "corner": "filters/parts/corner-flourish.webp",
+      "cornerScale": 0.235,
+      "bouquet": "filters/parts/bouquet-burgundy.webp",
+      "bouquetWidth": 0.58,
+      "bouquetMaxHeight": 0.58,
+      "line": { "outer": 49, "inner": 61, "outerWidth": 3.6, "innerWidth": 3.6 },
+      "palette": ["#F6E7B0", "#D3AC33", "#EFD98F", "#B98F1E"],
+      "text": {
+        "monogram": "S & S",
+        "date": "23 OCTOBRE 2026",
+        "tagline": "Vive les mariés"
+      }
     },
     {
       "id": "ss-ivory-gold-02",
@@ -31,52 +39,61 @@
       "active": true,
       "order": 2,
       "mediaTypes": ["photo", "video"],
-      "orientations": ["portrait"],
-      "portrait": "filters/portrait/filter-ss-ivory-gold-02.png",
-      "thumbnail": "",
-      "fit": "cover",
-      "safeArea": { "top": 0.12, "bottom": 0.18, "left": 0.08, "right": 0.08 }
+      "type": "composed",
+      "layout": "bouquet",
+      "corner": "filters/parts/corner-fine.webp",
+      "cornerScale": 0.235,
+      "bouquet": "filters/parts/bouquet-ivory.webp",
+      "bouquetWidth": 0.54,
+      "bouquetMaxHeight": 0.58,
+      "line": { "outer": 62, "inner": 75, "outerWidth": 2.6, "innerWidth": 2.6 },
+      "palette": ["#FBEFC8", "#DCB756", "#F5E4AC", "#C79B2A"],
+      "glow": "rgba(255,238,196,0.55)",
+      "text": {
+        "monogram": "S & S",
+        "date": "23 OCTOBRE 2026",
+        "tagline": "Vive les mariés"
+      }
     },
     {
       "id": "salma-soufiane-gold-03",
-      "name": "Salma & Soufiane Gold",
+      "name": "The Wedding",
       "category": "elegant",
       "active": true,
       "order": 3,
       "mediaTypes": ["photo", "video"],
-      "orientations": ["portrait"],
-      "portrait": "filters/portrait/filter-salma-soufiane-gold-03.png",
-      "thumbnail": "",
-      "fit": "cover",
-      "safeArea": { "top": 0.12, "bottom": 0.18, "left": 0.08, "right": 0.08 }
+      "type": "composed",
+      "layout": "wedding",
+      "corner": "filters/parts/corner-royal.webp",
+      "cornerScale": 0.245,
+      "line": { "outer": 61, "inner": 75, "outerWidth": 3.4, "innerWidth": 4.2 },
+      "palette": ["#F7E6A6", "#D0A82B", "#EEDA92", "#B58A1C"],
+      "text": {
+        "heading": "THE WEDDING",
+        "names": "Salma & Soufiane",
+        "date": "23.10.2026",
+        "monogram": "SS"
+      }
     },
     {
-      "id": "salma-soufiane-gold-04",
-      "name": "Salma & Soufiane Gold 2",
-      "category": "elegant",
-      "_note": "Désactivé : trop proche de salma-soufiane-gold-03. Passer active à true pour le remettre.",
-      "active": false,
+      "id": "ss-minimal-04",
+      "name": "Or Fin",
+      "category": "minimal",
+      "active": true,
       "order": 4,
       "mediaTypes": ["photo", "video"],
-      "orientations": ["portrait"],
-      "portrait": "filters/portrait/filter-salma-soufiane-gold-04.png",
-      "thumbnail": "",
-      "fit": "cover",
-      "safeArea": { "top": 0.12, "bottom": 0.18, "left": 0.08, "right": 0.08 }
-    },
-    {
-      "id": "salma-soufiane-ivory-05",
-      "name": "Salma & Soufiane Ivory",
-      "category": "elegant",
-      "_note": "Désactivé pour alléger le choix. Passer active à true pour le remettre.",
-      "active": false,
-      "order": 5,
-      "mediaTypes": ["photo", "video"],
-      "orientations": ["portrait"],
-      "portrait": "filters/portrait/filter-salma-soufiane-ivory-05.png",
-      "thumbnail": "",
-      "fit": "cover",
-      "safeArea": { "top": 0.12, "bottom": 0.18, "left": 0.08, "right": 0.08 }
+      "_note": "Cadre épuré : aucune gerbe, le visage reste entièrement dégagé. C'est le filtre le plus sûr pour les photos de groupe.",
+      "type": "composed",
+      "layout": "wedding",
+      "corner": "filters/parts/corner-fine.webp",
+      "cornerScale": 0.20,
+      "line": { "outer": 62, "inner": 75, "outerWidth": 2.4, "innerWidth": 2.4 },
+      "palette": ["#FAF0D2", "#D8B65E", "#F2E3B4", "#C09A33"],
+      "text": {
+        "names": "Salma & Soufiane",
+        "date": "23.10.2026",
+        "monogram": "SS"
+      }
     }
   ]
 }

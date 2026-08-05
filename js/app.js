@@ -111,7 +111,9 @@ const state = {
   previewMuted: false,
   isBusy: false,
   isSent: false,
-  burnCancelled: false,
+  burnCancelled: false,   /* incrustation du filtre interrompue */
+  sendCancelled: false,   /* envoi interrompu par l'invité */
+  cancelMode: null,       /* null | 'skip' | 'cancel' */
   activePoll: null,
   activeXhr: null
 };
@@ -393,33 +395,70 @@ async function loadFilters() {
       if (f.availableUntil && now > Date.parse(f.availableUntil)) return false;
       return true;
     })
-    .map((f) => ({
-      id: f.id,
+    .map((f) => Object.assign({}, f, {
       name: f.name || f.id,
       category: f.category || 'default',
       order: Number.isFinite(f.order) ? f.order : 999,
       mediaTypes: Array.isArray(f.mediaTypes) ? f.mediaTypes : ['photo', 'video'],
-      portrait: f.id === 'none' ? '' : (f.portrait || `filters/portrait/filter-${f.id}.png`),
-      landscape: f.id === 'none' ? '' : (f.landscape || ''),
-      /* Convention : si tools/optimize-filters.sh a été lancé, la miniature
-         existe et est utilisée automatiquement. Sinon, repli silencieux sur
-         l'image plein format — aucune modification de filters.json requise. */
-      thumbnail: f.id === 'none' ? '' : (f.thumbnail || `filters/thumbnails/filter-${f.id}.png`)
+      /* « composed » : cadre recalculé aux dimensions exactes de la cible.
+         « image »    : ancien PNG plein format, conservé pour compatibilité. */
+      type: f.id === 'none'
+        ? 'none'
+        : (f.type === 'image' || (!f.type && f.portrait) ? 'image' : 'composed')
     }))
     .sort((a, b) => a.order - b.order);
 
   if (!state.filters.some((f) => f.id === 'none')) {
     state.filters.unshift({
       id: 'none', name: 'Aucun filtre', order: -1,
-      mediaTypes: ['photo', 'video'], portrait: '', landscape: '', thumbnail: ''
+      type: 'none', mediaTypes: ['photo', 'video']
     });
   }
 }
 
-function filterSourceFor(filter) {
-  if (!filter || filter.id === 'none') return '';
-  const isLandscape = state.mediaWidth > state.mediaHeight;
-  return (isLandscape && filter.landscape) ? filter.landscape : filter.portrait;
+function hasOverlay(filter) {
+  return !!filter && filter.type && filter.type !== 'none';
+}
+
+/*
+ * Le filtre est composé à la demande, aux dimensions EXACTES de la cible.
+ *
+ * C'est le cœur du correctif : un PNG figé en 2:3 posé en « cover » sur un
+ * écran en 9:19,5 perdait un tiers de sa largeur, et les filets latéraux
+ * comme les ornements d'angle sortaient du cadre. Recalculé au format réel,
+ * le cadre épouse toujours les quatre bords — et l'aperçu est identique au
+ * fichier exporté, puisque les deux passent par ici.
+ */
+async function filterCanvasFor(filter, width, height) {
+  if (!hasOverlay(filter)) return null;
+
+  if (filter.type === 'image') {
+    const isLandscape = state.mediaWidth > state.mediaHeight;
+    const src = (isLandscape && filter.landscape) ? filter.landscape : filter.portrait;
+    if (!src) return null;
+    const img = await loadImage(src);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(width);
+    canvas.height = Math.round(height);
+    drawCover(canvas.getContext('2d'), img, canvas.width, canvas.height, false);
+    return canvas;
+  }
+
+  return FilterRender.render(filter, width, height);
+}
+
+/* Définition d'aperçu : celle de l'écran, plafonnée pour rester fluide
+   même sur un téléphone d'entrée de gamme. */
+function previewOverlaySize() {
+  const box = el.mediaBox.getBoundingClientRect();
+  /* Repli sur le viewport : la boîte mesure zéro tant que l'écran d'aperçu
+     n'est pas affiché, et un cadre composé en 2 × 2 pixels serait invisible. */
+  const w = box.width > 2 ? box.width : (window.innerWidth || 1080);
+  const h = box.height > 2 ? box.height : (window.innerHeight || 1920);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const longEdge = Math.max(w, h) * dpr;
+  const scale = longEdge > 1800 ? 1800 / Math.max(w, h) : dpr;
+  return { width: Math.round(w * scale), height: Math.round(h * scale) };
 }
 
 function availableFilters() {
@@ -441,29 +480,21 @@ function buildFilterStrip() {
     chip.setAttribute('aria-label', 'Filtre : ' + filter.name);
     chip.dataset.index = String(index);
 
-    if (filter.id === 'none') {
+    if (!hasOverlay(filter)) {
       const x = document.createElement('span');
       x.className = 'filter-chip__x';
       x.setAttribute('aria-hidden', 'true');
       x.textContent = '⃠';
       chip.appendChild(x);
     } else {
-      const img = document.createElement('img');
-      img.alt = '';
-      img.decoding = 'async';
-      img.dataset.src = filter.thumbnail;
-      img.dataset.fallback = filterSourceFor(filter);
-      img.onerror = () => {
-        /* Miniature absente : on retombe une seule fois sur l'image complète. */
-        if (img.dataset.fallback) {
-          const full = img.dataset.fallback;
-          delete img.dataset.fallback;
-          img.src = full;
-        } else {
-          img.remove();
-        }
-      };
-      chip.appendChild(img);
+      /* Miniature composée sur place, au format de la vignette : elle est
+         donc toujours fidèle au filtre, sans fichier à régénérer à la main. */
+      const thumb = document.createElement('canvas');
+      thumb.className = 'filter-chip__thumb';
+      thumb.width = 132;
+      thumb.height = 132;
+      chip.appendChild(thumb);
+      chip.dataset.thumbPending = '1';
     }
 
     const label = document.createElement('span');
@@ -479,14 +510,59 @@ function buildFilterStrip() {
 }
 
 function hydrateNearbyThumbnails() {
+  const list = availableFilters();
   el.filterStrip.querySelectorAll('.filter-chip').forEach((chip, index) => {
-    if (Math.abs(index - state.filterIndex) > 2) return;
-    const img = chip.querySelector('img[data-src]');
-    if (img && img.dataset.src) {
-      img.src = img.dataset.src;
-      delete img.dataset.src;
-    }
+    if (Math.abs(index - state.filterIndex) > 3) return;
+    if (chip.dataset.thumbPending !== '1') return;
+    const thumb = chip.querySelector('canvas');
+    const filter = list[index];
+    if (!thumb || !filter) return;
+
+    delete chip.dataset.thumbPending;
+    filterCanvasFor(filter, thumb.width, thumb.height)
+      .then((composed) => {
+        if (!composed) return;
+        const ctx = thumb.getContext('2d');
+        ctx.fillStyle = 'rgba(70,60,70,0.9)';
+        ctx.fillRect(0, 0, thumb.width, thumb.height);
+        ctx.drawImage(composed, 0, 0, thumb.width, thumb.height);
+      })
+      .catch(() => { chip.dataset.thumbPending = '1'; });
   });
+}
+
+/* Une seule composition d'aperçu à la fois : si l'invité fait défiler
+   rapidement, seul le dernier filtre demandé doit s'afficher. */
+let overlayToken = 0;
+
+function paintOverlay(filter) {
+  const token = ++overlayToken;
+
+  if (!hasOverlay(filter)) {
+    el.filterOverlay.hidden = true;
+    const ctx = el.filterOverlay.getContext('2d');
+    ctx.clearRect(0, 0, el.filterOverlay.width, el.filterOverlay.height);
+    return;
+  }
+
+  const size = previewOverlaySize();
+  filterCanvasFor(filter, size.width, size.height)
+    .then((composed) => {
+      if (token !== overlayToken || !composed) return;
+      const target = el.filterOverlay;
+      if (target.width !== composed.width || target.height !== composed.height) {
+        target.width = composed.width;
+        target.height = composed.height;
+      }
+      const ctx = target.getContext('2d');
+      ctx.clearRect(0, 0, target.width, target.height);
+      ctx.drawImage(composed, 0, 0);
+      target.hidden = false;
+    })
+    .catch((err) => {
+      console.error('[filtre] composition impossible :', err);
+      if (token === overlayToken) el.filterOverlay.hidden = true;
+    });
 }
 
 function selectFilter(index, scrollIntoView) {
@@ -508,27 +584,24 @@ function selectFilter(index, scrollIntoView) {
   });
 
   hydrateNearbyThumbnails();
-
-  const src = filterSourceFor(filter);
-  if (!src) {
-    el.filterOverlay.hidden = true;
-    el.filterOverlay.removeAttribute('src');
-  } else {
-    el.filterOverlay.src = src;
-    el.filterOverlay.hidden = false;
-  }
+  paintOverlay(filter);
 
   updateVideoFilterNotice();
   scheduleSpeculativeRender();
   peekFilter();
   announce('Filtre sélectionné : ' + filter.name);
-
-  [state.filterIndex - 1, state.filterIndex + 1].forEach((i) => {
-    const near = list[i];
-    const nearSrc = near && filterSourceFor(near);
-    if (nearSrc) { const p = new Image(); p.src = nearSrc; }
-  });
 }
+
+/* La barre d'adresse iOS et la rotation changent le format de l'écran :
+   le cadre est alors recomposé pour continuer à épouser les bords. */
+let overlayResizeTimer = null;
+function refreshOverlayOnResize() {
+  if (!el.screenPreview.classList.contains('is-active')) return;
+  clearTimeout(overlayResizeTimer);
+  overlayResizeTimer = setTimeout(() => paintOverlay(currentFilter()), 220);
+}
+window.addEventListener('resize', refreshOverlayOnResize);
+window.addEventListener('orientationchange', () => setTimeout(refreshOverlayOnResize, 320));
 
 function currentFilter() {
   const list = availableFilters();
@@ -565,24 +638,17 @@ function preloadAllFilters() {
   if (filtersPreloaded) return;
   filtersPreloaded = true;
 
-  const sources = state.filters
-    .map((f) => f.portrait)
-    .filter(Boolean);
-
   const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 400));
-  let index = 0;
+  idle(() => {
+    /* Pièces d'ornement (quelques dizaines de kilo-octets) et polices :
+       tout est prêt avant même que l'invité n'arrive à l'aperçu. */
+    FilterRender.preload(state.filters.filter((f) => f.type === 'composed'));
 
-  const next = () => {
-    if (index >= sources.length) return;
-    const src = sources[index++];
-    const img = new Image();
-    img.decoding = 'async';
-    /* Chargement séquentiel : ne concurrence jamais le flux caméra. */
-    img.onload = img.onerror = () => idle(next);
-    img.src = src;
-  };
-
-  idle(next);
+    /* Anciens filtres image, s'il en reste dans filters.json. */
+    state.filters
+      .filter((f) => f.type === 'image' && f.portrait)
+      .forEach((f) => { const img = new Image(); img.src = f.portrait; });
+  });
 }
 
 
@@ -1416,9 +1482,12 @@ function goToPreview() {
   el.btnSend.disabled = false;
   el.btnSaveShare.disabled = false;
 
+  /* L'écran est affiché AVANT de choisir le filtre : le cadre est composé
+     aux dimensions réelles de la boîte d'aperçu, or celles-ci valent zéro
+     tant que l'écran est masqué. */
   buildFilterStrip();
-  selectFilter(0, false);
   showScreen('preview');
+  selectFilter(0, false);
   announce('Aperçu de votre souvenir. Faites glisser pour découvrir les filtres.');
 }
 
@@ -1535,7 +1604,7 @@ function canBurnVideoFilter() {
 function updateVideoFilterNotice() {
   if (state.mediaType !== 'video') { el.videoFilterNotice.hidden = true; return; }
   const filter = currentFilter();
-  if (!filter || filter.id === 'none' || canBurnVideoFilter()) {
+  if (!hasOverlay(filter) || canBurnVideoFilter()) {
     el.videoFilterNotice.hidden = true;
     return;
   }
@@ -1546,7 +1615,7 @@ function updateVideoFilterNotice() {
   el.videoFilterNotice.hidden = false;
 }
 
-async function burnFilterIntoPhoto(blob, filterSrc) {
+async function burnFilterIntoPhoto(blob, filter) {
   const url = URL.createObjectURL(blob);
   try {
     const photo = await loadImage(url);
@@ -1559,8 +1628,10 @@ async function burnFilterIntoPhoto(blob, filterSrc) {
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(photo, 0, 0, w, h);
 
-    const overlay = await loadImage(filterSrc);
-    drawCover(ctx, overlay, w, h, false);
+    /* Composé aux dimensions exactes de la photo : aucun recadrage,
+       donc aucun risque de voir le cadre déborder ou se rogner. */
+    const overlay = await filterCanvasFor(filter, w, h);
+    if (overlay) ctx.drawImage(overlay, 0, 0, w, h);
 
     let out = await canvasToBlob(canvas, 'image/jpeg', CONFIG.JPEG_QUALITY);
     if (!out || !out.size) throw new Error('Export du canvas vide.');
@@ -1576,7 +1647,7 @@ async function burnFilterIntoPhoto(blob, filterSrc) {
   }
 }
 
-async function burnFilterIntoVideo(blob, filterSrc, onProgress) {
+async function burnFilterIntoVideo(blob, filter, onProgress) {
   if (!canBurnVideoFilter()) return null;
 
   const url = URL.createObjectURL(blob);
@@ -1585,8 +1656,6 @@ async function burnFilterIntoVideo(blob, filterSrc, onProgress) {
   let rafId = null;
 
   try {
-    const overlay = await loadImage(filterSrc);
-
     videoEl = document.createElement('video');
     videoEl.src = url;
     videoEl.playsInline = true;
@@ -1604,6 +1673,10 @@ async function burnFilterIntoVideo(blob, filterSrc, onProgress) {
     const srcH = videoEl.videoHeight || state.mediaHeight || 1280;
     const w = Math.round(srcW / 2) * 2;
     const h = Math.round(srcH / 2) * 2;
+
+    /* Cadre composé une seule fois, au format exact de la vidéo : il est
+       ensuite réutilisé tel quel sur chaque image, sans aucun recadrage. */
+    const overlay = await filterCanvasFor(filter, w, h);
 
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
@@ -1650,7 +1723,7 @@ async function burnFilterIntoVideo(blob, filterSrc, onProgress) {
     const draw = () => {
       if (videoEl.readyState >= 2) {
         ctx.drawImage(videoEl, 0, 0, w, h);
-        drawCover(ctx, overlay, w, h, false);
+        if (overlay) ctx.drawImage(overlay, 0, 0, w, h);
       }
       if (onProgress) onProgress(Math.min(0.99, (videoEl.currentTime || 0) / totalDuration));
       if (!videoEl.ended && !state.burnCancelled) rafId = requestAnimationFrame(draw);
@@ -1734,15 +1807,14 @@ async function buildFinalMedia(silent) {
   }
 
   const filter = currentFilter();
-  const src = filterSourceFor(filter);
   let result;
 
-  if (!src) {
+  if (!hasOverlay(filter)) {
     result = { blob: state.mediaBlob, filterBurned: false };
   } else if (state.mediaType === 'photo') {
-    if (!silent) setWorking(true, 'Application du filtre…', 0.4, false);
+    if (!silent) setWorking(true, 'Application du filtre…', 0.4, null);
     try {
-      result = { blob: await burnFilterIntoPhoto(state.mediaBlob, src), filterBurned: true };
+      result = { blob: await burnFilterIntoPhoto(state.mediaBlob, filter), filterBurned: true };
     } catch (err) {
       console.error('[final] filtre photo :', err);
       if (!silent) toast("Le filtre n'a pas pu être appliqué à la photo.");
@@ -1760,10 +1832,10 @@ async function buildFinalMedia(silent) {
     /* L'aperçu est mis en pause : deux vidéos qui lisent en même temps
        ralentissent le réencodage et sont interdites sur certains iPhone. */
     try { el.previewVideo.pause(); } catch (e) {}
-    setWorking(true, 'Incrustation du filtre dans la vidéo…', 0, true);
+    setWorking(true, 'Incrustation du filtre dans la vidéo…', 0, 'skip');
 
-    const burned = await burnFilterIntoVideo(state.mediaBlob, src, (p) => {
-      setWorking(true, 'Incrustation du filtre dans la vidéo…', p, true);
+    const burned = await burnFilterIntoVideo(state.mediaBlob, filter, (p) => {
+      setWorking(true, 'Incrustation du filtre dans la vidéo…', p, 'skip');
     });
 
     if (burned) result = { blob: burned, filterBurned: true };
@@ -1782,7 +1854,22 @@ async function buildFinalMedia(silent) {
 
 /* ───────────────────────── OVERLAY DE TRAVAIL ───────────────────────── */
 
-function setWorking(visible, text, progress, cancellable, indeterminate) {
+/*
+ * Deux interruptions bien distinctes, et donc deux libellés distincts —
+ * l'ancien « Passer cette étape » restait affiché pendant l'envoi, où il
+ * ne voulait plus rien dire :
+ *
+ *   'skip'   pendant l'incrustation du filtre → « Passer cette étape »
+ *            (la vidéo d'origine est conservée, l'envoi continue) ;
+ *   'cancel' pendant l'envoi                  → « Annuler l'envoi »
+ *            (l'envoi est stoppé net, le souvenir reste sur le téléphone).
+ */
+const CANCEL_LABELS = {
+  skip: 'Passer cette étape',
+  cancel: "Annuler l'envoi"
+};
+
+function setWorking(visible, text, progress, cancelMode, indeterminate) {
   el.working.hidden = !visible;
   state.isBusy = visible;
   if (text) { el.workingText.textContent = text; announce(text); }
@@ -1794,12 +1881,34 @@ function setWorking(visible, text, progress, cancellable, indeterminate) {
     el.workingFill.style.width = Math.round(Math.max(0, Math.min(1, progress)) * 100) + '%';
   }
 
-  el.btnWorkingCancel.hidden = !cancellable;
+  /* Rétrocompatibilité : un simple booléen vaut encore « skip ». */
+  const mode = cancelMode === true ? 'skip' : (cancelMode || null);
+  state.cancelMode = visible ? mode : null;
+
+  if (mode) {
+    el.btnWorkingCancel.textContent = CANCEL_LABELS[mode];
+    el.btnWorkingCancel.hidden = false;
+  } else {
+    el.btnWorkingCancel.hidden = true;
+  }
 }
 
 el.btnWorkingCancel.addEventListener('click', () => {
-  state.burnCancelled = true;
+  const mode = state.cancelMode;
   el.btnWorkingCancel.hidden = true;
+
+  if (mode === 'cancel') {
+    /* L'envoi est abandonné, mais le souvenir a déjà été écrit sur
+       l'appareil : il repartira tout seul au prochain retour du réseau.
+       Rien n'est perdu, et l'invité récupère la main immédiatement. */
+    state.sendCancelled = true;
+    el.workingText.textContent = "Annulation de l'envoi…";
+    if (state.activeXhr) { try { state.activeXhr.abort(); } catch (e) {} }
+    if (state.activePoll) { state.activePoll.stop(true); state.activePoll = null; }
+    return;
+  }
+
+  state.burnCancelled = true;
   el.workingText.textContent = 'Interruption…';
 });
 
@@ -1886,6 +1995,12 @@ function postMedia(url, body) {
        seule la consultation du statut fait foi. */
     xhr.onerror = () => { state.activeXhr = null; resolve({ ok: false, data: null }); };
     xhr.ontimeout = () => { state.activeXhr = null; resolve({ ok: false, data: null }); };
+    /* Sans ce gestionnaire, « Annuler l'envoi » laisserait la promesse en
+       suspens et l'écran de chargement resterait figé indéfiniment. */
+    xhr.onabort = () => {
+      state.activeXhr = null;
+      resolve({ ok: false, data: null, aborted: true });
+    };
 
     xhr.send(body);
   });
@@ -1980,7 +2095,18 @@ function pollUploadStatus(uploadId, onTick) {
     let stopped = false;
     let sequence = 0;
 
-    state.activePoll = { stop() { stopped = true; } };
+    /* stop() rend la main tout de suite : sans cela, « Annuler l'envoi »
+       stopperait les requêtes mais laisserait l'invité devant le spinner. */
+    state.activePoll = {
+      stop(cancelled) {
+        stopped = true;
+        if (cancelled) {
+          const error = new Error('Envoi annulé.');
+          error.cancelled = true;
+          reject(error);
+        }
+      }
+    };
 
     function request() {
       if (stopped) return;
@@ -2073,9 +2199,11 @@ async function attemptSend(item, options) {
     }
   }
 
-  if (interactive) setWorking(true, 'Préparation de votre souvenir…', 0.12, false);
+  if (interactive) setWorking(true, 'Préparation de votre souvenir…', 0.12, 'cancel');
   const blob = new Blob([item.bytes], { type: item.mimeType });
   const mediaBase64 = await blobToBase64(blob);
+
+  if (interactive && state.sendCancelled) throw cancelledError();
 
   const payload = JSON.stringify({
     uploadId: item.uploadId,
@@ -2092,10 +2220,12 @@ async function attemptSend(item, options) {
   });
 
   if (interactive) {
-    setWorking(true, 'Envoi aux mariés… (' + formatBytes(item.size) + ')', null, false, true);
+    setWorking(true, 'Envoi aux mariés… (' + formatBytes(item.size) + ')', null, 'cancel', true);
   }
 
   const response = await postMedia(CONFIG.API_URL, payload);
+
+  if (response.aborted || (interactive && state.sendCancelled)) throw cancelledError();
 
   /* Si la requête a échoué ALORS QUE l'appareil est hors ligne, inutile
      d'interroger le statut pendant des minutes : on abandonne tout de suite
@@ -2107,9 +2237,15 @@ async function attemptSend(item, options) {
     throw error;
   }
 
-  if (interactive) setWorking(true, 'Enregistrement dans l’album…', 0.85, false, false);
+  if (interactive) setWorking(true, 'Enregistrement dans l’album…', 0.85, 'cancel', false);
 
   return pollUploadStatus(item.uploadId);
+}
+
+function cancelledError() {
+  const error = new Error('Envoi annulé.');
+  error.cancelled = true;
+  return error;
 }
 
 let queueRunning = false;
@@ -2164,13 +2300,15 @@ el.btnSend.addEventListener('click', async () => {
   el.btnSend.disabled = true;
   el.btnSaveShare.disabled = true;
   state.message = el.captionInput.value.trim();
+  state.sendCancelled = false;
 
   const filter = currentFilter();
+  let pending = null;   /* souvenir écrit dans la file, à retirer si annulé */
 
   try {
     const { blob, filterBurned } = await buildFinalMedia();
 
-    setWorking(true, 'Vérification du fichier…', 0.05, false);
+    setWorking(true, 'Vérification du fichier…', 0.05, 'cancel');
 
     if (!blob || blob.size === 0) throw new Error('Le fichier est vide.');
 
@@ -2221,11 +2359,12 @@ el.btnSend.addEventListener('click', async () => {
     /* Écrit sur l'appareil AVANT l'envoi : même si le réseau lâche
        maintenant, le souvenir est déjà à l'abri. */
     let queued = false;
-    try { await queuePut(item); queued = true; }
+    try { await queuePut(item); queued = true; pending = item; }
     catch (err) { console.warn('[file] stockage local indisponible :', err); }
 
     const result = await attemptSend(item, { interactive: true });
 
+    pending = null;
     if (queued) { try { await queueDelete(item.uploadId); } catch (e) {} }
 
     state.isSent = true;
@@ -2237,6 +2376,19 @@ el.btnSend.addEventListener('click', async () => {
 
   } catch (err) {
     setWorking(false);
+
+    /* Annulation volontaire : ce n'est pas une erreur. Le souvenir a déjà
+       été écrit sur l'appareil, il repartira seul si l'invité le souhaite. */
+    if (err && err.cancelled) {
+      console.info('[upload] annulé par l’invité.');
+      /* Retiré de la file d'attente : annuler doit vraiment annuler, sinon
+         le souvenir repartirait tout seul au prochain retour du réseau. */
+      if (pending) { try { await queueDelete(pending.uploadId); } catch (e) {} }
+      toast('Envoi annulé. Votre souvenir est toujours là : vous pouvez le ' +
+            'modifier, l’enregistrer sur votre téléphone, ou le renvoyer.');
+      return;
+    }
+
     console.error('[upload] échec :', err, err && err.details);
 
     const message = err && err.message ? err.message : 'erreur inconnue';
@@ -2309,7 +2461,9 @@ function resetMedia() {
   revokePreviewURL();
   el.previewImg.removeAttribute('src');
   el.previewVideo.removeAttribute('src');
-  el.filterOverlay.removeAttribute('src');
+  el.filterOverlay.hidden = true;
+  el.filterOverlay.getContext('2d')
+    .clearRect(0, 0, el.filterOverlay.width, el.filterOverlay.height);
   el.captionInput.value = state.message;
   state.mediaBlob = null;
   state.mediaType = null;

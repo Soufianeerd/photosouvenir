@@ -42,7 +42,14 @@
   [headers.values]
     Cache-Control = "public, max-age=300, must-revalidate"
 
-# Images de filtres : lourdes et stables, cache long.
+# Pièces des filtres (ornements d'angle, gerbes florales) : légères,
+# immuables, téléchargées une seule fois puis servies depuis le cache.
+[[headers]]
+  for = "/filters/parts/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Anciennes images plein format, conservées pour compatibilité.
 [[headers]]
   for = "/filters/portrait/*"
   [headers.values]
@@ -50,11 +57,6 @@
 
 [[headers]]
   for = "/filters/landscape/*"
-  [headers.values]
-    Cache-Control = "public, max-age=31536000, immutable"
-
-[[headers]]
-  for = "/filters/thumbnails/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
 

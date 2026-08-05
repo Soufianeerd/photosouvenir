@@ -392,10 +392,15 @@ body.is-scrollable { overflow: auto; }
   background: #000;
 }
 .mediastage__media[hidden] { display: none; }
+/* Le filtre est composé au format EXACT de cette boîte (js/filter-render.js).
+   Il n'y a donc rien à recadrer : « fill » est ici un simple changement
+   d'échelle, sans la moindre déformation. C'est ce qui garantit que le
+   cadre doré touche les quatre bords de l'écran sur tous les appareils —
+   l'ancien PNG en 2:3, posé en « cover », perdait un tiers de sa largeur. */
 .mediastage__filter {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
-  object-fit: cover;          /* couvre la boîte du média, sans déformation */
+  object-fit: fill;
   pointer-events: none;
   z-index: 2;
 }
@@ -465,7 +470,11 @@ body.is-scrollable { overflow: auto; }
   padding: 0;
 }
 .filter-chip[aria-selected="true"] { border-color: var(--gold); transform: scale(1.06); }
-.filter-chip img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.filter-chip img,
+.filter-chip__thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* Les vignettes sont composées sur place : un fond sombre évite le
+   clignotement blanc le temps que la pièce d'ornement arrive. */
+.filter-chip__thumb { background: rgba(45,38,45,0.85); }
 .filter-chip__label {
   position: absolute; inset: auto 0 0 0;
   font-size: 0.55rem; font-weight: 600; letter-spacing: 0.02em;
