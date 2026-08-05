@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Diagnostic — Livre de Souvenirs</title>
+<style>
+  :root {
+    --cream:#F9F7F2; --bordeaux:#5D262C; --gold:#C9A227;
+    --ink:#2D1214; --muted:#9A7C7E;
+    --ok:#1F7A3D; --warn:#B87309; --ko:#B3261E;
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--cream); color: var(--ink);
+    padding: calc(var(--safe-t) + 1.25rem) 1rem calc(var(--safe-b) + 3rem);
+    -webkit-text-size-adjust:100%;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  h1 { font-size:1.25rem; font-weight:600; color:var(--bordeaux); }
+  .sub { font-size:.8rem; color:var(--muted); margin:.35rem 0 1.25rem; line-height:1.5; }
+
+  .verdict {
+    border-radius:6px; padding:1rem; margin-bottom:1.25rem;
+    font-size:.9rem; font-weight:600; line-height:1.5;
+    background:#EFEFEF; color:#555;
+  }
+  .verdict.ok   { background:#E8F5EC; color:var(--ok); }
+  .verdict.warn { background:#FDF3E3; color:var(--warn); }
+  .verdict.ko   { background:#FBEAE8; color:var(--ko); }
+
+  h2 {
+    font-size:.65rem; font-weight:700; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--bordeaux);
+    margin:1.5rem 0 .5rem;
+  }
+  .row {
+    display:flex; align-items:flex-start; gap:.65rem;
+    padding:.7rem .25rem; border-bottom:1px solid rgba(93,38,44,.09);
+  }
+  .badge {
+    flex:0 0 auto; width:1.35rem; height:1.35rem; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:.75rem; font-weight:700; color:#fff; background:#BBB; margin-top:1px;
+  }
+  .badge.ok{background:var(--ok)} .badge.warn{background:var(--warn)}
+  .badge.ko{background:var(--ko)} .badge.run{background:var(--gold)}
+  .txt { flex:1; min-width:0; }
+  .name { font-size:.85rem; font-weight:500; }
+  .detail { font-size:.72rem; color:var(--muted); margin-top:.2rem; line-height:1.45; word-break:break-word; }
+
+  button {
+    width:100%; min-height:48px; margin:.5rem 0;
+    border:none; border-radius:4px; cursor:pointer;
+    background:var(--bordeaux); color:var(--cream);
+    font-family:inherit; font-size:.72rem; font-weight:600;
+    letter-spacing:.12em; text-transform:uppercase;
+  }
+  button.ghost { background:transparent; color:var(--bordeaux); border:1px solid rgba(93,38,44,.25); }
+  button:disabled { opacity:.45; }
+
+  video { width:100%; border-radius:6px; background:#000; margin-top:.6rem; display:block; }
+  #liveWrap, #resultWrap { display:none; }
+  pre {
+    background:#2D1214; color:#F9F7F2; border-radius:6px;
+    padding:.85rem; font-size:.65rem; line-height:1.55;
+    overflow-x:auto; white-space:pre-wrap; word-break:break-word;
+    margin-top:.6rem;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Diagnostic de compatibilité</h1>
+  <p class="sub">
+    Ouvrez cette page <strong>sur le téléphone à tester</strong>, depuis l'adresse du site
+    (pas en local). Elle vérifie tout ce dont le livre de souvenirs a besoin, puis
+    lance un vrai enregistrement avec bascule de caméra.
+  </p>
+
+  <div class="verdict" id="verdict">Analyse en cours…</div>
+
+  <h2>Appareil</h2>
+  <div id="secDevice"></div>
+
+  <h2>Capacités du navigateur</h2>
+  <div id="secCaps"></div>
+
+  <h2>Test réel — caméra, micro, bascule</h2>
+  <p class="sub" style="margin:.6rem 0">
+    Enregistre 4 secondes et bascule automatiquement de caméra à mi-parcours.
+    C'est le test qui répond à « la bascule fonctionne-t-elle pendant la vidéo ? ».
+  </p>
+  <button id="btnLive">Lancer le test caméra</button>
+  <div id="liveWrap">
+    <video id="livePreview" playsinline muted autoplay></video>
+  </div>
+  <div id="secLive"></div>
+  <div id="resultWrap">
+    <p class="sub" style="margin:.8rem 0 0">Vidéo produite — vérifiez l'image <em>et le son</em> :</p>
+    <video id="resultVideo" playsinline controls></video>
+  </div>
+
+  <h2>Rapport</h2>
+  <button class="ghost" id="btnCopy">Copier le rapport</button>
+  <pre id="report">…</pre>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var results = [];
+
+  function add(section, name, status, detail) {
+    results.push({ section: section, name: name, status: status, detail: detail || '' });
+    var host = document.getElementById(section);
+    var row = document.createElement('div');
+    row.className = 'row';
+    var sym = { ok:'✓', warn:'!', ko:'✕', run:'…' }[status] || '?';
+    row.innerHTML =
+      '<span class="badge ' + status + '">' + sym + '</span>' +
+      '<span class="txt"><span class="name"></span>' +
+      (detail ? '<span class="detail"></span>' : '') + '</span>';
+    row.querySelector('.name').textContent = name;
+    if (detail) row.querySelector('.detail').textContent = detail;
+    host.appendChild(row);
+    refreshReport();
+    return row;
+  }
+
+  function update(row, status, detail) {
+    var badge = row.querySelector('.badge');
+    badge.className = 'badge ' + status;
+    badge.textContent = { ok:'✓', warn:'!', ko:'✕', run:'…' }[status] || '?';
+    var d = row.querySelector('.detail');
+    if (!d) {
+      d = document.createElement('span');
+      d.className = 'detail';
+      row.querySelector('.txt').appendChild(d);
+    }
+    d.textContent = detail || '';
+    var name = row.querySelector('.name').textContent;
+    for (var i = 0; i < results.length; i++) {
+      if (results[i].name === name) { results[i].status = status; results[i].detail = detail || ''; }
+    }
+    refreshReport();
+  }
+
+  function refreshReport() {
+    var lines = ['LIVRE DE SOUVENIRS — DIAGNOSTIC', new Date().toISOString(), ''];
+    var last = null;
+    results.forEach(function (r) {
+      if (r.section !== last) { lines.push(''); last = r.section; }
+      lines.push(({ ok:'[OK]  ', warn:'[!]   ', ko:'[KO]  ', run:'[...] ' }[r.status] || '[?] ') +
+                 r.name + (r.detail ? ' — ' + r.detail : ''));
+    });
+    document.getElementById('report').textContent = lines.join('\n');
+  }
+
+  function setVerdict() {
+    var ko = results.filter(function (r) { return r.status === 'ko'; }).length;
+    var warn = results.filter(function (r) { return r.status === 'warn'; }).length;
+    var v = document.getElementById('verdict');
+    if (ko > 0) {
+      v.className = 'verdict ko';
+      v.textContent = ko + ' point(s) bloquant(s) sur cet appareil. Voir le détail ci-dessous.';
+    } else if (warn > 0) {
+      v.className = 'verdict warn';
+      v.textContent = 'Fonctionnel, avec ' + warn + ' limitation(s) connue(s) et gérée(s) par l\'application.';
+    } else {
+      v.className = 'verdict ok';
+      v.textContent = 'Tout est pris en charge sur cet appareil.';
+    }
+  }
+
+  /* ───────── Appareil ───────── */
+
+  var ua = navigator.userAgent;
+  var isIOS = /iPad|iPhone|iPod/.test(ua) ||
+              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var isAndroid = /Android/.test(ua);
+  var osName = isIOS ? 'iOS / iPadOS' : isAndroid ? 'Android' :
+               /Mac/.test(ua) ? 'macOS' : /Windows/.test(ua) ? 'Windows' : 'Autre';
+  var iosVersion = (ua.match(/OS (\d+)[_.](\d+)/) || [])[0];
+
+  add('secDevice', 'Système', 'ok', osName + (iosVersion ? ' — ' + iosVersion.replace(/_/g, '.') : ''));
+  add('secDevice', 'Navigateur', 'ok', ua.slice(0, 140));
+  add('secDevice', 'Écran', 'ok',
+      window.innerWidth + ' × ' + window.innerHeight + ' px · densité ' + (window.devicePixelRatio || 1));
+
+  var secure = window.isSecureContext;
+  add('secDevice', 'Connexion sécurisée (HTTPS)', secure ? 'ok' : 'ko',
+      secure ? location.origin : 'La caméra est impossible sans HTTPS. Ouvrez l\'adresse en https://');
+
+  var dvh = CSS && CSS.supports && CSS.supports('height', '100dvh');
+  add('secDevice', 'Plein écran sans barre d\'adresse', dvh ? 'ok' : 'warn',
+      dvh ? 'unité dvh prise en charge' : 'repli sur 100vh + visualViewport, déjà prévu');
+
+  /* ───────── Capacités ───────── */
+
+  var hasGUM = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  add('secCaps', 'Accès caméra et micro', hasGUM ? 'ok' : 'ko',
+      hasGUM ? 'getUserMedia disponible' : 'Navigateur trop ancien : photo et vidéo impossibles');
+
+  var hasRec = typeof MediaRecorder !== 'undefined';
+  var bestMime = '';
+  var CANDIDATES = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=h264,aac', 'video/mp4',
+    'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm;codecs=h264,opus', 'video/webm'
+  ];
+  var supported = [];
+  if (hasRec && MediaRecorder.isTypeSupported) {
+    CANDIDATES.forEach(function (m) { if (MediaRecorder.isTypeSupported(m)) supported.push(m); });
+    bestMime = supported[0] || '';
+  }
+  add('secCaps', 'Enregistrement vidéo', hasRec && (bestMime || !MediaRecorder.isTypeSupported) ? 'ok' : 'ko',
+      hasRec ? (bestMime ? 'format retenu : ' + bestMime : 'isTypeSupported absent — le navigateur choisira seul')
+             : 'MediaRecorder absent : mode photo uniquement');
+  if (supported.length) {
+    add('secCaps', 'Formats acceptés par le serveur', 'ok', supported.join('  ·  '));
+  }
+
+  var canvasStream = typeof HTMLCanvasElement !== 'undefined' &&
+                     typeof HTMLCanvasElement.prototype.captureStream === 'function';
+  add('secCaps', 'Bascule de caméra pendant la vidéo', canvasStream ? 'ok' : 'warn',
+      canvasStream ? 'canvas.captureStream disponible'
+                   : 'non disponible : le bouton sera désactivé pendant l\'enregistrement');
+
+  var audioCtx = !!(window.AudioContext || window.webkitAudioContext);
+  add('secCaps', 'Son dans la vidéo filtrée', audioCtx ? 'ok' : 'warn',
+      audioCtx ? 'AudioContext disponible' : 'la vidéo filtrée pourrait être muette');
+
+  add('secCaps', 'Filtre incrusté dans la vidéo',
+      (canvasStream && hasRec && audioCtx) ? 'ok' : 'warn',
+      (canvasStream && hasRec && audioCtx)
+        ? 'réencodage possible : le fichier envoyé contiendra le filtre'
+        : 'la vidéo d\'origine sera conservée, l\'application le signale à l\'invité');
+
+  var idb = !!window.indexedDB;
+  add('secCaps', 'File d\'attente hors ligne', idb ? 'ok' : 'warn',
+      idb ? 'IndexedDB disponible : aucun souvenir perdu en cas de coupure'
+          : 'sans stockage local, un envoi interrompu devra être refait');
+
+  var canShareFiles = false;
+  try {
+    canShareFiles = !!(navigator.canShare &&
+      navigator.canShare({ files: [new File(['x'], 'x.jpg', { type: 'image/jpeg' })] }));
+  } catch (e) {}
+  add('secCaps', 'Enregistrer ou partager', canShareFiles ? 'ok' : 'warn',
+      canShareFiles ? 'partage natif de fichiers disponible'
+                    : 'repli sur le téléchargement direct du fichier');
+
+  add('secCaps', 'Service worker (cache hors ligne)',
+      ('serviceWorker' in navigator) ? 'ok' : 'warn',
+      ('serviceWorker' in navigator) ? 'disponible'
+        : 'non disponible : la page sera rechargée à chaque fois');
+
+  add('secCaps', 'Écran maintenu allumé', navigator.wakeLock ? 'ok' : 'warn',
+      navigator.wakeLock ? 'Wake Lock disponible' : 'l\'écran peut s\'éteindre pendant un long enregistrement');
+
+  add('secCaps', 'Retour vibrant', navigator.vibrate ? 'ok' : 'warn',
+      navigator.vibrate ? 'disponible' : 'non pris en charge (iOS) — sans conséquence');
+
+  /* Filtre incrusté dans la photo : test réel sur un vrai fichier. */
+  var rowPhoto = add('secCaps', 'Filtre incrusté dans la photo', 'run', 'test en cours…');
+  (function testPhotoBurn() {
+    var img = new Image();
+    img.onload = function () {
+      try {
+        var c = document.createElement('canvas');
+        c.width = 400; c.height = 700;
+        var ctx = c.getContext('2d');
+        ctx.fillStyle = '#888'; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        var data = c.toDataURL('image/jpeg', 0.9);
+        if (data && data.length > 2000) {
+          update(rowPhoto, 'ok', 'filtre réellement écrit dans le fichier (' +
+                 Math.round(data.length / 1365) + ' Ko de test)');
+        } else {
+          update(rowPhoto, 'ko', 'export du canvas vide');
+        }
+      } catch (err) {
+        update(rowPhoto, 'ko', 'canvas verrouillé : ' + err.message);
+      }
+      setVerdict();
+    };
+    img.onerror = function () {
+      update(rowPhoto, 'warn', 'image de filtre introuvable — testez depuis l\'adresse du site déployé');
+      setVerdict();
+    };
+    img.src = 'filters/portrait/filter-ss-ivory-gold-02.png?diag=' + Date.now();
+  })();
+
+  /* Backend joignable (JSONP, comme l'application). */
+  var rowApi = add('secCaps', 'Serveur des mariés joignable', 'run', 'test en cours…');
+  (function testBackend() {
+    var cb = 'diagcb' + Math.random().toString(36).slice(2, 8);
+    var s = document.createElement('script');
+    var done = false;
+    window[cb] = function (data) {
+      if (done) return; done = true;
+      update(rowApi, 'ok', 'réponse reçue · statut « ' + (data && data.status) + ' »');
+      cleanup(); setVerdict();
+    };
+    function cleanup() { try { delete window[cb]; } catch (e) {} if (s.parentNode) s.parentNode.removeChild(s); }
+    s.onerror = function () {
+      if (done) return; done = true;
+      update(rowApi, 'ko', 'aucune réponse du serveur Apps Script');
+      cleanup(); setVerdict();
+    };
+    setTimeout(function () {
+      if (done) return; done = true;
+      update(rowApi, 'warn', 'délai dépassé — réseau très lent ou serveur non déployé');
+      cleanup(); setVerdict();
+    }, 12000);
+
+    s.src = 'https://script.google.com/macros/s/AKfycbw_fBZ1FmpvAl8IyXZ_7nsrMrGquVlUuGXY-YfQ7GBac0sI7dRHFLtJVGGWi5d7B-pUeg/exec' +
+            '?action=status&uploadId=diagnostic-' + Date.now() + '&prefix=' + cb;
+    document.head.appendChild(s);
+  })();
+
+  setVerdict();
+
+  /* ───────── Test réel caméra ───────── */
+
+  document.getElementById('btnLive').addEventListener('click', async function () {
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = 'Test en cours…';
+    document.getElementById('liveWrap').style.display = 'block';
+    document.getElementById('secLive').innerHTML = '';
+
+    var preview = document.getElementById('livePreview');
+    var videoStream = null, audioStream = null, canvasStream = null, recorder = null, raf = null;
+
+    var rowCam = add('secLive', 'Ouverture de la caméra', 'run', '');
+    var rowMic = add('secLive', 'Ouverture du micro', 'run', '');
+    var rowSwitch = add('secLive', 'Bascule de caméra pendant l\'enregistrement', 'run', '');
+    var rowFile = add('secLive', 'Fichier vidéo produit', 'run', '');
+
+    try {
+      videoStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'user' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+      });
+      var st = videoStream.getVideoTracks()[0].getSettings ? videoStream.getVideoTracks()[0].getSettings() : {};
+      update(rowCam, 'ok', 'résolution obtenue : ' + (st.width || '?') + ' × ' + (st.height || '?'));
+      preview.srcObject = videoStream;
+      await preview.play().catch(function () {});
+    } catch (err) {
+      update(rowCam, 'ko', err.name + ' — ' + err.message);
+      update(rowMic, 'ko', 'non testé'); update(rowSwitch, 'ko', 'non testé'); update(rowFile, 'ko', 'non testé');
+      btn.disabled = false; btn.textContent = 'Relancer le test'; setVerdict(); return;
+    }
+
+    try {
+      audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      update(rowMic, 'ok', 'micro autorisé');
+    } catch (err) {
+      update(rowMic, 'warn', 'refusé ou absent : les vidéos seront muettes (' + err.name + ')');
+    }
+
+    if (!canvasStream && !(typeof HTMLCanvasElement.prototype.captureStream === 'function')) {
+      update(rowSwitch, 'warn', 'canvas.captureStream absent : bascule impossible pendant la vidéo');
+    }
+
+    var canvas = document.createElement('canvas');
+    canvas.width = 720;
+    canvas.height = Math.round(720 * (window.innerHeight / window.innerWidth) / 2) * 2;
+    var ctx = canvas.getContext('2d');
+    var facing = 'user';
+
+    function draw() {
+      if (preview.readyState >= 2 && preview.videoWidth) {
+        var iw = preview.videoWidth, ih = preview.videoHeight;
+        var sc = Math.max(canvas.width / iw, canvas.height / ih);
+        var w = iw * sc, h = ih * sc, x = (canvas.width - w) / 2, y = (canvas.height - h) / 2;
+        if (facing === 'user') {
+          ctx.save(); ctx.translate(canvas.width, 0); ctx.scale(-1, 1);
+          ctx.drawImage(preview, x, y, w, h); ctx.restore();
+        } else {
+          ctx.drawImage(preview, x, y, w, h);
+        }
+      }
+      raf = requestAnimationFrame(draw);
+    }
+
+    try {
+      canvasStream = canvas.captureStream(30);
+      if (audioStream) audioStream.getAudioTracks().forEach(function (t) { canvasStream.addTrack(t); });
+      draw();
+
+      var opts = { videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 };
+      if (bestMime) opts.mimeType = bestMime;
+      try { recorder = new MediaRecorder(canvasStream, opts); }
+      catch (e) { recorder = new MediaRecorder(canvasStream); }
+
+      var chunks = [];
+      recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+
+      var stopped = new Promise(function (res) { recorder.onstop = res; });
+      recorder.start(500);
+
+      /* Bascule à mi-parcours, enregistrement en cours. */
+      await new Promise(function (r) { setTimeout(r, 2000); });
+      try {
+        var next = facing === 'user' ? 'environment' : 'user';
+        var newStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: next } }, audio: false
+        });
+        videoStream.getTracks().forEach(function (t) { t.stop(); });
+        videoStream = newStream;
+        facing = next;
+        preview.srcObject = newStream;
+        await preview.play().catch(function () {});
+        update(rowSwitch, 'ok', 'bascule effectuée sans interrompre l\'enregistrement');
+      } catch (err) {
+        update(rowSwitch, 'warn', 'bascule refusée : ' + err.name +
+               ' (appareil probablement mono-caméra)');
+      }
+
+      await new Promise(function (r) { setTimeout(r, 2000); });
+      recorder.stop();
+      await stopped;
+      cancelAnimationFrame(raf);
+
+      var type = (recorder.mimeType || bestMime || 'video/webm').split(';')[0];
+      var blob = new Blob(chunks, { type: type });
+
+      if (!blob.size) {
+        update(rowFile, 'ko', 'vidéo vide');
+      } else {
+        var kb = Math.round(blob.size / 1024);
+        var okMime = ['video/mp4', 'video/webm', 'video/quicktime'].indexOf(type) !== -1;
+        update(rowFile, okMime ? 'ok' : 'ko',
+               type + ' · ' + kb + ' Ko pour 4 s · piste audio : ' +
+               (canvasStream.getAudioTracks().length ? 'oui' : 'non') +
+               (okMime ? '' : ' — format REFUSÉ par le serveur'));
+
+        document.getElementById('resultWrap').style.display = 'block';
+        document.getElementById('resultVideo').src = URL.createObjectURL(blob);
+      }
+    } catch (err) {
+      update(rowFile, 'ko', err.name + ' — ' + err.message);
+    } finally {
+      if (raf) cancelAnimationFrame(raf);
+      [videoStream, audioStream].forEach(function (s) {
+        if (s) s.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+      });
+      preview.srcObject = null;
+      document.getElementById('liveWrap').style.display = 'none';
+      btn.disabled = false;
+      btn.textContent = 'Relancer le test';
+      setVerdict();
+    }
+  });
+
+  document.getElementById('btnCopy').addEventListener('click', function () {
+    var text = document.getElementById('report').textContent;
+    var btn = this;
+    var done = function () { btn.textContent = 'Rapport copié'; setTimeout(function () { btn.textContent = 'Copier le rapport'; }, 2000); };
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, done);
+    else done();
+  });
+})();
+</script>
+</body>
+</html>

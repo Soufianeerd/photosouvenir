@@ -131,7 +131,6 @@ const el = {
   screenDone: $('screenDone'),
 
   nameInput: $('nameInput'),
-  messageInput: $('messageInput'),
   btnStart: $('btnStart'),
 
   cameraFeed: $('cameraFeed'),
@@ -521,6 +520,7 @@ function selectFilter(index, scrollIntoView) {
 
   updateVideoFilterNotice();
   scheduleSpeculativeRender();
+  peekFilter();
   announce('Filtre sélectionné : ' + filter.name);
 
   [state.filterIndex - 1, state.filterIndex + 1].forEach((i) => {
@@ -533,6 +533,26 @@ function selectFilter(index, scrollIntoView) {
 function currentFilter() {
   const list = availableFilters();
   return list[state.filterIndex] || list[0] || { id: 'none', name: 'Aucun filtre' };
+}
+
+/*
+ * Le bas d'un filtre — cadre doré, prénoms, date — tombait derrière la
+ * légende et les boutons. Pendant qu'on choisit, ces éléments s'effacent
+ * pour laisser voir le rendu complet, puis reviennent seuls.
+ */
+let peekTimer = null;
+function peekFilter(hold) {
+  const bottom = el.filterStrip.parentElement;
+  bottom.classList.add('is-peeking');
+  el.screenPreview.classList.add('is-peeking');
+
+  clearTimeout(peekTimer);
+  if (hold) return;
+
+  peekTimer = setTimeout(() => {
+    bottom.classList.remove('is-peeking');
+    el.screenPreview.classList.remove('is-peeking');
+  }, 1600);
 }
 
 /*
@@ -1439,6 +1459,8 @@ el.previewVideo.addEventListener('timeupdate', () => {
   el.mediaStage.addEventListener('pointerdown', (e) => {
     if (state.isBusy) return;
     tracking = true; startX = e.clientX; startY = e.clientY;
+    /* Doigt posé sur le média : on dégage tout de suite le bas du cadre. */
+    peekFilter(true);
   });
 
   el.mediaStage.addEventListener('pointerup', (e) => {
@@ -1466,11 +1488,11 @@ el.previewVideo.addEventListener('timeupdate', () => {
       return;
     }
 
-    if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+    if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy) * 1.4) { peekFilter(); return; }
     selectFilter(state.filterIndex + (dx < 0 ? 1 : -1), true);
   });
 
-  el.mediaStage.addEventListener('pointercancel', () => { tracking = false; });
+  el.mediaStage.addEventListener('pointercancel', () => { tracking = false; peekFilter(); });
 })();
 
 document.addEventListener('keydown', (e) => {
@@ -2259,7 +2281,6 @@ function recallGuestName() {
 
 el.btnStart.addEventListener('click', async () => {
   state.guestName = el.nameInput.value.trim();
-  state.message = el.messageInput.value.trim();
   rememberGuestName(state.guestName);
   showScreen('capture');
   setCaptureMode('photo');

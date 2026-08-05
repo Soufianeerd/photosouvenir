@@ -23,10 +23,31 @@ livre-photos/
 ├── Code-livre-photos.gs    Backend Google Apps Script
 ├── netlify.toml            Déploiement statique et en-têtes
 ├── sw.js                   Service worker — cache hors ligne
+├── diagnostic.html         Page de test de compatibilité, à ouvrir sur mobile
+├── manifest.webmanifest    Manifeste PWA
+├── icon.svg                Icône de l'application
 ├── tools/
 │   └── optimize-filters.sh Miniatures et compression des filtres
 └── README.md
 ```
+
+## Tester la compatibilité d'un téléphone
+
+Ouvrez `https://photosouvenir.netlify.app/diagnostic.html` **depuis le téléphone
+à tester**. La page vérifie tout ce dont l'application a besoin, puis lance un
+vrai enregistrement de 4 secondes en basculant de caméra à mi-parcours.
+
+Elle répond notamment à :
+
+- la bascule avant/arrière fonctionne-t-elle **pendant** la vidéo ?
+- le filtre est-il réellement incrusté dans la photo et dans la vidéo ?
+- quel format vidéo ce navigateur produit-il, et le serveur l'accepte-t-il ?
+- le partage natif de fichiers est-il disponible ?
+- le serveur des mariés répond-il ?
+
+Un bouton « Copier le rapport » produit un résumé texte à conserver ou à
+transmettre. Testez au minimum : un iPhone récent, un iPhone ancien, un Android
+récent, un Android d'entrée de gamme.
 
 ## Optimisations en place
 
