@@ -59,34 +59,22 @@
         <!-- CAMERA CONTAINER (Full Screen) -->
         <div class="camera-container" id="cameraContainer">
           <video id="cameraFeed" class="camera-feed" autoplay playsinline muted></video>
-          <div id="cameraOverlay" class="camera-overlay"></div>
           
           <!-- UI Flottante par dessus la caméra -->
           <div class="camera-ui">
-            <!-- Haut : Bouton retour et Timer -->
+            <!-- Haut -->
             <div class="camera-ui__top">
-              <button class="btn btn--ghost btn--back" id="btnBackToStep1">
-                ← Retour
-              </button>
-              <div id="videoTimer" class="video-timer">00:00</div>
+              <button class="icon-btn" id="btnBackToStep1">✕</button>
+              <button class="icon-btn" id="btnSwitchCamera">🔄</button>
             </div>
 
-            <!-- Bas : Filtres et Contrôles -->
+            <!-- Bas : Bouton de capture -->
             <div class="camera-ui__bottom">
-              <div class="filter-carousel" id="filterCarousel">
-                <!-- Injecté via JS -->
+              <div class="snap-capture-wrap">
+                <button class="snap-capture-btn" id="btnSnapCapture"></button>
               </div>
-
-              <div class="camera-controls" id="cameraControls">
-                <button class="btn-switch" id="btnSwitchCamera" title="Changer de caméra">🔄</button>
-                <div class="capture-actions">
-                  <button class="btn-capture" id="btnCapturePhoto" title="Prendre une photo">📷</button>
-                  <button class="btn-capture" id="btnCaptureVideo" title="Enregistrer une vidéo" style="border-color: #c0392b; color: #c0392b;">🔴</button>
-                </div>
-              </div>
-              <p class="step-desc shadow-text" style="text-align:center; font-size:0.6rem; margin-top: 1rem; color: #fff;">
-                Touchez 📷 pour une photo ou 🔴 pour une vidéo (max 60s).
-              </p>
+              <p class="snap-hint shadow-text">Tap pour photo • Maintenir pour vidéo</p>
+              <div id="videoTimer" class="snap-timer">00:00</div>
             </div>
           </div>
 
@@ -106,36 +94,39 @@
         <div class="preview-wrap" id="previewWrap">
           <img class="preview-img" id="previewImg" />
           <video class="preview-video" id="previewVideo" controls playsinline></video>
+          <div id="previewOverlay" class="camera-overlay"></div>
           
-          <!-- Bouton de retour en haut -->
-          <button class="preview-change" id="btnChangeMedia">← Recommencer</button>
+          <!-- Haut -->
+          <div class="camera-ui__top" style="position: absolute; top: max(2rem, env(safe-area-inset-top)); left: 1rem; right: 1rem; z-index: 20;">
+            <button class="icon-btn" id="btnChangeMedia">✕</button>
+          </div>
+
+          <!-- Texte centré -->
+          <input class="snap-caption" type="text" id="captionInput" placeholder="Ajouter une légende..." maxlength="120" />
           
-          <!-- Panneau inférieur d'envoi -->
-          <div class="preview-ui__bottom">
-            <div class="photo-meta" id="photoMeta">
-              <span class="photo-meta__icon">💾</span>
-              <span class="photo-meta__name" id="metaName">—</span>
-              <span class="photo-meta__size" id="metaSize">—</span>
+          <!-- Bas -->
+          <div class="snap-preview-bottom">
+            <!-- Carousel filtres placé juste au-dessus des actions -->
+            <div class="filter-carousel" id="filterCarousel" style="margin-bottom: 1.5rem;">
+              <!-- Injecté via JS -->
             </div>
-
-            <div class="field">
-              <input class="field__input shadow-input" type="text" id="captionInput" placeholder="Ajouter une légende (optionnel)…" maxlength="120" />
-            </div>
-
-            <div style="display:flex; margin-bottom: 1.25rem;">
-              <button class="btn btn--download" id="btnShareNative" style="flex:1; margin:0; background: #fff; color: #000;">
-                <span class="btn__icon">📤</span> Enregistrer ou Partager
+            
+            <div class="snap-action-bar">
+              <!-- Enregistrer -->
+              <button class="icon-btn-circle" id="btnShareNative" title="Enregistrer / Partager">
+                ⬇️
+              </button>
+              
+              <!-- Envoyer -->
+              <button class="snap-send-btn" id="btnSendToDrive">
+                Envoyer à <span class="send-arrow">➔</span>
               </button>
             </div>
+          </div>
 
-            <div class="upload-progress" id="uploadProgress">
-              <div class="upload-progress__bar"><div class="upload-progress__fill" id="progressFill"></div></div>
-              <p class="upload-progress__text" id="progressText" style="color: #fff">Préparation…</p>
-            </div>
-
-            <button class="btn btn--primary" id="btnSendToDrive">
-              <span class="btn__icon">✉️</span> Envoyer aux mariés
-            </button>
+          <!-- Progress -->
+          <div class="upload-progress" id="uploadProgress" style="position: absolute; bottom: 0; left: 0; width: 100%; z-index: 30;">
+            <div class="upload-progress__bar" style="margin-bottom:0;"><div class="upload-progress__fill" id="progressFill"></div></div>
           </div>
         </div>
       </div>

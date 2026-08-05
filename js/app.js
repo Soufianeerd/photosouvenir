@@ -41,25 +41,20 @@ const els = {
   
   cameraContainer: document.getElementById('cameraContainer'),
   cameraFeed: document.getElementById('cameraFeed'),
-  cameraOverlay: document.getElementById('cameraOverlay'),
   cameraFallback: document.getElementById('cameraFallback'),
   filterCarousel: document.getElementById('filterCarousel'),
   videoTimer: document.getElementById('videoTimer'),
   
   btnSwitchCamera: document.getElementById('btnSwitchCamera'),
-  btnCapturePhoto: document.getElementById('btnCapturePhoto'),
-  btnCaptureVideo: document.getElementById('btnCaptureVideo'),
+  btnSnapCapture: document.getElementById('btnSnapCapture'),
   
   previewImg: document.getElementById('previewImg'),
   previewVideo: document.getElementById('previewVideo'),
+  previewOverlay: document.getElementById('previewOverlay'),
   btnChangeMedia: document.getElementById('btnChangeMedia'),
-  metaName: document.getElementById('metaName'),
-  metaSize: document.getElementById('metaSize'),
   
   btnShareNative: document.getElementById('btnShareNative'),
   btnSendToDrive: document.getElementById('btnSendToDrive'),
-  btnResetAll: document.getElementById('btnResetAll'),
-  
   loadingState: document.getElementById('loadingState'),
   loadingText: document.getElementById('loadingText'),
   alertBox: document.getElementById('alertBox')
@@ -104,16 +99,19 @@ async function initFilters() {
   });
 }
 
-function selectFilter(filter, el) {
+function applyFilter(filter) {
   state.activeFilter = filter;
+  if (filter.id === 'none') {
+    els.previewOverlay.innerHTML = '';
+  } else {
+    els.previewOverlay.innerHTML = `<img src="${filter.src}" />`;
+  }
+}
+
+function selectFilter(filter, el) {
+  applyFilter(filter);
   document.querySelectorAll('.filter-item').forEach(i => i.classList.remove('active'));
   if(el) el.classList.add('active');
-  
-  if (filter.src) {
-    els.cameraOverlay.innerHTML = `<img src="${filter.src}" />`;
-  } else {
-    els.cameraOverlay.innerHTML = '';
-  }
 }
 
 // ── NAVIGATION ──
@@ -163,7 +161,7 @@ els.btnSwitchCamera.addEventListener('click', () => {
 });
 
 // ── CAPTURE PHOTO ──
-els.btnCapturePhoto.addEventListener('click', () => {
+function takePhoto() {
   if (!state.currentStream) return;
   const canvas = document.createElement('canvas');
   canvas.width = els.cameraFeed.videoWidth;
@@ -177,46 +175,94 @@ els.btnCapturePhoto.addEventListener('click', () => {
   }
   ctx.drawImage(els.cameraFeed, 0, 0, canvas.width, canvas.height);
   
-  // Dessiner le filtre par dessus si présent
-  if (state.activeFilter.src) {
-    const img = els.cameraOverlay.querySelector('img');
-    if (img) {
-      // Réinitialiser la transfo pour le filtre
-      ctx.setTransform(1, 0, 0, 1, 0, 0); 
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    }
-  }
-  
+  // Pas de filtre ici, le média brut est sauvegardé
   canvas.toBlob(blob => {
     state.mediaBlob = blob;
     state.mediaType = 'photo';
+    
+    // Apply default filter on capture
+    applyFilter(CONFIG.FILTERS[0]);
+    document.querySelectorAll('.filter-item').forEach(el => el.classList.remove('active'));
+    document.querySelector('.filter-item').classList.add('active');
+    
     goToPreview();
   }, 'image/jpeg', 0.85);
-});
+}
+
+// ── GET COMPOSITED MEDIA ──
+async function getFinalBlob() {
+  if (state.mediaType === 'video' || state.activeFilter.id === 'none') {
+    return state.mediaBlob; // Vidéo sans filtre brûlé, ou pas de filtre
+  }
+  
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    const img = new Image();
+    const filterImg = els.previewOverlay.querySelector('img');
+    
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      
+      if (filterImg) {
+        ctx.drawImage(filterImg, 0, 0, canvas.width, canvas.height);
+      }
+      
+      canvas.toBlob(resolve, 'image/jpeg', 0.90);
+    };
+    img.src = state.previewURL;
+  });
+}
 
 // ── CAPTURE VIDÉO ──
 let mediaRecorder;
 let recordedChunks = [];
-els.btnCaptureVideo.addEventListener('click', () => {
+let capturePressTimer = null;
+let isCapturePressed = false;
+
+// ── SNAPCHAT BUTTON LOGIC ──
+function handleCaptureStart(e) {
+  if(e.type === 'touchstart') e.preventDefault();
   if (!state.currentStream) return;
+  isCapturePressed = true;
+  
+  // Si on reste appuyé plus de 300ms, c'est une vidéo
+  capturePressTimer = setTimeout(() => {
+    if(isCapturePressed) startRecording();
+  }, 300);
+}
+
+function handleCaptureEnd(e) {
+  if(e.type === 'touchend') e.preventDefault();
+  isCapturePressed = false;
+  
+  if (capturePressTimer) clearTimeout(capturePressTimer);
   
   if (state.isRecording) {
     stopRecording();
   } else {
-    startRecording();
+    // Si on a relâché avant 300ms, c'est une photo
+    takePhoto();
   }
-});
+}
+
+els.btnSnapCapture.addEventListener('mousedown', handleCaptureStart);
+els.btnSnapCapture.addEventListener('touchstart', handleCaptureStart, {passive: false});
+els.btnSnapCapture.addEventListener('mouseup', handleCaptureEnd);
+els.btnSnapCapture.addEventListener('touchend', handleCaptureEnd, {passive: false});
 
 function startRecording() {
   recordedChunks = [];
   state.recordStartTime = Date.now(); // Track start time for accurate duration
   
-  // Configurer le MediaRecorder avec une forte compression (1 Mbps)
-  const options = { mimeType: 'video/mp4', videoBitsPerSecond: 1000000 };
+  // Configurer le MediaRecorder avec une bonne qualité (2.5 Mbps)
+  const options = { mimeType: 'video/mp4', videoBitsPerSecond: 2500000 };
   try {
     mediaRecorder = new MediaRecorder(state.currentStream, options);
   } catch (e) {
-    mediaRecorder = new MediaRecorder(state.currentStream, { videoBitsPerSecond: 1000000 }); // fallback mimeType
+    mediaRecorder = new MediaRecorder(state.currentStream, { videoBitsPerSecond: 2500000 }); // fallback mimeType
   }
   
   mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
@@ -227,17 +273,17 @@ function startRecording() {
     // Calculate real duration
     state.videoDuration = Math.round((Date.now() - state.recordStartTime) / 1000);
     
-    // Alerte sur les limites techniques de la vidéo sur mobile
-    if(state.activeFilter.id !== 'none') {
-      showAlert("Info technique : Sur vidéo, le filtre n'est appliqué qu'en aperçu. Le fichier enregistré sera sans filtre (limitation navigateur mobile).");
-    }
+    // Apply default filter on capture
+    applyFilter(CONFIG.FILTERS[0]);
+    document.querySelectorAll('.filter-item').forEach(el => el.classList.remove('active'));
+    document.querySelector('.filter-item').classList.add('active');
     
     goToPreview();
   };
   
   mediaRecorder.start();
   state.isRecording = true;
-  els.btnCaptureVideo.classList.add('recording');
+  els.btnSnapCapture.classList.add('recording');
   
   // Timer
   els.videoTimer.classList.add('visible');
@@ -265,7 +311,7 @@ function stopRecording() {
   mediaRecorder.stop();
   clearInterval(state.recordTimerInterval);
   state.isRecording = false;
-  els.btnCaptureVideo.classList.remove('recording');
+  els.btnSnapCapture.classList.remove('recording');
   els.videoTimer.classList.remove('visible');
 }
 
@@ -274,18 +320,14 @@ function goToPreview() {
   if(state.previewURL) URL.revokeObjectURL(state.previewURL);
   state.previewURL = URL.createObjectURL(state.mediaBlob);
   
-  els.metaSize.textContent = (state.mediaBlob.size / (1024*1024)).toFixed(2) + ' Mo';
-  
   if (state.mediaType === 'photo') {
     els.previewImg.src = state.previewURL;
     els.previewImg.style.display = 'block';
     els.previewVideo.style.display = 'none';
-    els.metaName.textContent = `Photo de ${state.userName}`;
   } else {
     els.previewVideo.src = state.previewURL;
     els.previewVideo.style.display = 'block';
     els.previewImg.style.display = 'none';
-    els.metaName.textContent = `Vidéo de ${state.userName}`;
   }
   
   showStep('step3');
@@ -308,7 +350,8 @@ function getFileName() {
 els.btnShareNative?.addEventListener('click', async () => {
   if (!state.mediaBlob) return;
   const fileName = getFileName();
-  const file = new File([state.mediaBlob], fileName, { type: state.mediaBlob.type });
+  const finalBlob = await getFinalBlob();
+  const file = new File([finalBlob], fileName, { type: finalBlob.type });
   
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
@@ -322,7 +365,7 @@ els.btnShareNative?.addEventListener('click', async () => {
     }
   } else {
     // Fallback : lien de téléchargement standard si Web Share API non supportée
-    const url = URL.createObjectURL(state.mediaBlob);
+    const url = URL.createObjectURL(finalBlob);
     const a = document.createElement('a');
     a.href = url;
     a.download = fileName;
@@ -353,13 +396,14 @@ els.btnSendToDrive.addEventListener('click', async () => {
   els.loadingText.textContent = 'Préparation du fichier...';
   
   try {
-    const base64 = await blobToBase64(state.mediaBlob);
+    const finalBlob = await getFinalBlob();
+    const base64 = await blobToBase64(finalBlob);
     els.loadingText.textContent = 'Envoi vers Google Drive (cela peut prendre quelques minutes pour une vidéo)...';
     
     const payload = {
       uploadId: generateUploadId(),
       mediaType: state.mediaType,
-      mimeType: state.mediaBlob.type,
+      mimeType: finalBlob.type,
       mediaBase64: base64,
       duration: state.mediaType === 'video' ? (state.videoDuration || 0) : 0,
       guestName: state.userName,
@@ -407,13 +451,16 @@ els.btnBackToStep1.addEventListener('click', () => {
   showStep('step1');
 });
 
-els.btnResetAll.addEventListener('click', () => {
-  if(state.previewURL) URL.revokeObjectURL(state.previewURL);
-  state.mediaBlob = null;
-  els.captionInput.value = '';
-  showStep('step2');
-  startCamera();
-});
+els.btnResetAll = document.getElementById('btnResetAll');
+if (els.btnResetAll) {
+  els.btnResetAll.addEventListener('click', () => {
+    if(state.previewURL) URL.revokeObjectURL(state.previewURL);
+    state.mediaBlob = null;
+    els.captionInput.value = '';
+    showStep('step2');
+    startCamera();
+  });
+}
 
 // ── INIT ──
 initFilters();
