@@ -25,3 +25,9 @@ filters/portrait/_originaux/
 *.njsproj
 *.sln
 *.sw?
+
+# Local deployment credentials and configuration
+.netlify/
+.clasp.json
+.env
+.env.*

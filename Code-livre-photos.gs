@@ -34,7 +34,7 @@
  * Incrémenter à chaque modification, puis redéployer une NOUVELLE version.
  * C'est la seule façon fiable de savoir quelle version est réellement en ligne.
  */
-const BACKEND_VERSION = '2026.08.05-1';
+const BACKEND_VERSION = '2026.10.17-1';
 
 /**
  * Dossier Drive principal — VÉRIFIÉ le 5 août 2026 :
@@ -68,7 +68,7 @@ const SHEET_TAB = 'Registre Souvenirs';
  * PropertiesService les conserve jusqu'à six heures.
  */
 const CACHE_EXPIRATION_SECONDS = 3600;
-const STATUS_RETENTION_MS = 6 * 60 * 60 * 1000;
+const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Limites appliquées côté Google Apps Script.
@@ -110,157 +110,122 @@ const STATUS_PREFIX = 'upload_';
  * Appelée automatiquement par le site.
  * Ne pas exécuter doPost manuellement depuis l'éditeur Apps Script.
  */
-function doPost(e) {
-  let uploadId = 'unknown';
+// Bounded admission and idempotency: only the reservation is protected by the
+// script lock. Drive writes run concurrently in at most six admitted requests.
+const MAX_ACTIVE_UPLOADS = 6;
+const UPLOAD_LEASE_MS = 7 * 60 * 1000;
 
-  /**
-   * Journal de diagnostic : renvoyé au frontend en cas d'échec.
-   * Ne contient aucun secret : uniquement des métadonnées techniques.
-   */
-  const diagnostics = {
-    step: 'reception',
-    mediaType: null,
-    mimeType: null,
-    receivedBytes: null,
-    duration: null,
-    filename: null,
-    version: BACKEND_VERSION
-  };
-
+function reserveUpload_(uploadId) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) return { status: 'RETRY', retryAfter: 10, message: 'Serveur occupé. Votre souvenir reste sur votre téléphone.' };
   try {
-    diagnostics.step = 'lecture_requete';
-
-    if (!e || !e.postData || !e.postData.contents) {
-      throw new Error('Requête POST invalide.');
+    const known = getStatus_(uploadId);
+    if (known.status === 'COMPLETED') return known;
+    const props = PropertiesService.getScriptProperties();
+    const all = JSON.parse(props.getProperty('active_uploads') || '{}');
+    const now = Date.now();
+    for (const key of Object.keys(all)) if (all[key] < now) delete all[key];
+    if (all[uploadId]) return { uploadId, status: 'PROCESSING', retryAfter: 12 };
+    if (Object.keys(all).length >= MAX_ACTIVE_UPLOADS) {
+      const busy = { uploadId, status: 'RETRY', retryAfter: 10 + Math.floor(Math.random() * 10), message: 'Les souvenirs arrivent nombreux. Nouvelle tentative dans un instant.' };
+      setStatus_(uploadId, 'RETRY', busy); return busy;
     }
+    all[uploadId] = now + UPLOAD_LEASE_MS;
+    props.setProperty('active_uploads', JSON.stringify(all));
+    const saves = Number(props.getProperty('save_count') || 0) + 1;
+    props.setProperty('save_count', String(saves));
+    if (saves % 40 === 0) cleanupOldStatuses();
+    setStatus_(uploadId, 'PROCESSING', { version: BACKEND_VERSION });
+    return { admitted: true };
+  } finally { lock.releaseLock(); }
+}
 
-    diagnostics.step = 'analyse_json';
+function releaseUpload_(uploadId) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(5000);
+    const props = PropertiesService.getScriptProperties();
+    const active = JSON.parse(props.getProperty('active_uploads') || '{}');
+    delete active[uploadId];
+    props.setProperty('active_uploads', JSON.stringify(active));
+  } catch (err) { Logger.log('Réservation conservée jusqu’à expiration.'); }
+  finally { if (lock.hasLock()) lock.releaseLock(); }
+}
 
+function looksLikeMedia_(bytes, mime) {
+  const b = bytes.map(v => (v + 256) % 256);
+  if (mime === 'image/jpeg') return b.length > 3 && b[0] === 255 && b[1] === 216 && b[2] === 255;
+  if (mime === 'image/png') return b.slice(0, 8).join(',') === '137,80,78,71,13,10,26,10';
+  if (mime === 'image/webp') return String.fromCharCode.apply(null, b.slice(0,4)) === 'RIFF' && String.fromCharCode.apply(null, b.slice(8,12)) === 'WEBP';
+  if (mime === 'video/webm') return b.slice(0,4).join(',') === '26,69,223,163';
+  if (mime === 'video/mp4' || mime === 'video/quicktime') {
+    const atom = String.fromCharCode.apply(null, b.slice(4,8));
+    return ['ftyp', 'moov', 'mdat', 'wide', 'free'].indexOf(atom) !== -1;
+  }
+  return false;
+}
+
+function doPost(e) {
+  let uploadId = null, admitted = false;
+  const diagnostics = { step: 'reception', version: BACKEND_VERSION };
+  try {
+    if (!e || !e.postData || !e.postData.contents) throw new Error('Requête POST invalide.');
+    if (e.postData.contents.length > Math.ceil(MAX_VIDEO_BYTES * 4 / 3) + 65536) throw new Error('La vidéo dépasse la taille maximale de 25 Mo.');
     let data;
-    try {
-      data = JSON.parse(e.postData.contents);
-    } catch (parseError) {
-      throw new Error('Payload JSON invalide.');
-    }
-
-    diagnostics.step = 'identifiant';
+    try { data = JSON.parse(e.postData.contents); } catch (err) { throw new Error('Payload JSON invalide.'); }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Payload JSON invalide.');
     uploadId = validateUploadId_(data.uploadId || Utilities.getUuid());
-
-    setStatus_(uploadId, 'PROCESSING', {
-      message: 'Traitement du souvenir en cours.',
-      version: BACKEND_VERSION
-    });
-
-    diagnostics.step = 'lecture_metadonnees';
-
     const mediaType = String(data.mediaType || '').toLowerCase().trim();
-    const mimeType = normalizeMimeType_(data.mimeType || 'application/octet-stream');
+    const mimeType = normalizeMimeType_(data.mimeType || '');
     const mediaBase64 = normalizeBase64_(data.mediaBase64 || '');
     const duration = Number(data.duration || 0);
-    const guestName = safeText_(data.guestName || 'Anonyme', 80);
-    const message = safeText_(data.message || '', 500);
-    const filterId = safeText_(data.filterId || 'none', 80);
-    const filterBurned = data.filterBurned === true;
-    const orientation = safeText_(data.orientation || 'unknown', 30);
-
-    diagnostics.mediaType = mediaType;
-    diagnostics.mimeType = mimeType;
-    diagnostics.duration = duration;
-
-    diagnostics.step = 'validation_metadonnees';
+    diagnostics.mediaType = mediaType; diagnostics.mimeType = mimeType;
     validateMediaMetadata_(mediaType, mimeType, mediaBase64, duration);
 
-    diagnostics.step = 'nom_de_fichier';
-    const filename = normalizeFilename_(
-      data.filename || (Date.now() + '_souvenir'),
-      mimeType
-    );
-    diagnostics.filename = filename;
+    const reservation = reserveUpload_(uploadId);
+    if (!reservation.admitted) return buildResponse_(Object.assign({ uploadId, version: BACKEND_VERSION }, reservation));
+    admitted = true;
 
-    diagnostics.step = 'decodage_base64';
-    const fileBytes = Utilities.base64Decode(mediaBase64);
-    const fileSize = fileBytes.length;
-    diagnostics.receivedBytes = fileSize;
-
-    diagnostics.step = 'validation_fichier';
-    validateDecodedFile_(mediaType, mimeType, fileSize, duration);
-
-    diagnostics.step = 'creation_blob';
-    const blob = Utilities.newBlob(fileBytes, mimeType, filename);
-
+    // The deterministic name also prevents duplicates after status retention expires
+    // or if Drive creation succeeds just before an interrupted execution.
+    const filename = uploadId + '-' + normalizeFilename_(data.filename || 'souvenir', mimeType);
     diagnostics.step = 'ouverture_dossier_drive';
-    const mainFolder = DriveApp.getFolderById(DRIVE_MAIN_FOLDER_ID);
-
-    const photosFolder = getOrCreateFolder_(mainFolder, PHOTOS_FOLDER_NAME);
-    const videosFolder = getOrCreateFolder_(mainFolder, VIDEOS_FOLDER_NAME);
-
-    const destinationFolder = (mediaType === 'photo') ? photosFolder : videosFolder;
-
-    diagnostics.step = 'ecriture_drive';
-
-    /**
-     * Le fichier est créé sans setSharing() :
-     * il reste privé dans le Drive du propriétaire.
-     */
-    const driveFile = destinationFolder.createFile(blob);
-    const fileId = driveFile.getId();
-
-    diagnostics.step = 'journalisation';
-
-    if (SHEET_ID && SHEET_ID.trim() !== '') {
-      logToSheet_(
-        uploadId, guestName, message, mediaType, filename, mimeType,
-        fileSize, duration, orientation, filterId, filterBurned,
-        fileId, destinationFolder.getName()
-      );
+    const main = DriveApp.getFolderById(DRIVE_MAIN_FOLDER_ID);
+    const destination = getOrCreateFolder_(main, mediaType === 'photo' ? PHOTOS_FOLDER_NAME : VIDEOS_FOLDER_NAME);
+    const existing = destination.getFilesByName(filename);
+    let file, size;
+    if (existing.hasNext()) {
+      file = existing.next(); size = file.getSize();
+    } else {
+      diagnostics.step = 'decodage_base64';
+      const bytes = Utilities.base64Decode(mediaBase64);
+      size = bytes.length;
+      validateDecodedFile_(mediaType, mimeType, size, duration);
+      if (!looksLikeMedia_(bytes.slice(0, 32), mimeType)) throw new Error('Le contenu du fichier ne correspond pas au format annoncé.');
+      diagnostics.step = 'ecriture_drive';
+      file = destination.createFile(Utilities.newBlob(bytes, mimeType, filename));
     }
-
-    diagnostics.step = 'termine';
-
-    setStatus_(uploadId, 'COMPLETED', {
-      message: 'Souvenir enregistré dans Google Drive.',
-      fileId: fileId,
-      filename: filename,
-      mediaType: mediaType,
-      folder: destinationFolder.getName(),
-      size: fileSize,
-      version: BACKEND_VERSION
-    });
-
-    return buildResponse_({
-      success: true,
-      uploadId: uploadId,
-      status: 'COMPLETED',
-      filename: filename,
-      folder: destinationFolder.getName(),
-      size: fileSize,
-      version: BACKEND_VERSION
-    });
-
+    diagnostics.step = 'metadonnees';
+    // Always preserve the complete caption, even when no Sheet is configured.
+    file.setDescription(JSON.stringify({
+      uploadId, receivedAt: new Date().toISOString(),
+      guestName: safeText_(data.guestName || 'Anonyme', 80),
+      message: safeText_(data.message || '', 500),
+      filterId: safeText_(data.filterId || 'none', 80), filterBurned: data.filterBurned === true,
+      mediaType, mimeType, duration, orientation: safeText_(data.orientation || 'unknown', 30)
+    }));
+    const receipt = { uploadId, status: 'COMPLETED', success: true, fileId: file.getId(), filename, size, mediaType, version: BACKEND_VERSION };
+    setStatus_(uploadId, 'COMPLETED', receipt);
+    return buildResponse_(receipt);
   } catch (error) {
-    const safeError = getPublicErrorMessage_(error, diagnostics);
-
-    Logger.log(
-      'Erreur doPost [' + uploadId + '] étape=' + diagnostics.step +
-      ' mime=' + diagnostics.mimeType +
-      ' taille=' + diagnostics.receivedBytes +
-      ' duree=' + diagnostics.duration +
-      ' : ' + String(error)
-    );
-
-    setStatus_(uploadId, 'FAILED', {
-      error: safeError,
-      diagnostics: diagnostics
-    });
-
-    return buildResponse_({
-      success: false,
-      uploadId: uploadId,
-      status: 'FAILED',
-      error: safeError,
-      diagnostics: diagnostics
-    });
-  }
+    const publicMessage = getPublicErrorMessage_(error, diagnostics);
+    const permanent = /invalide|incomplet|non autorisé|maximale|vide|inconnue|correspond pas/i.test(error.message || '');
+    const result = { uploadId, status: permanent ? 'FAILED' : 'RETRY', permanent, error: publicMessage, message: publicMessage, retryAfter: permanent ? 0 : 20, version: BACKEND_VERSION };
+    // A malformed or competing request must not overwrite another request's receipt.
+    if (admitted) setStatus_(uploadId, result.status, result);
+    Logger.log('Envoi ' + uploadId + ' : ' + diagnostics.step + ' : ' + String(error));
+    return buildResponse_(result);
+  } finally { if (admitted) releaseUpload_(uploadId); }
 }
 
 
@@ -317,6 +282,7 @@ function doGet(e) {
           service: 'Livre Photos Souvenirs',
           status: driveError ? 'DEGRADED' : 'OPERATIONAL',
           version: BACKEND_VERSION,
+          capacity: { concurrentDriveWrites: MAX_ACTIVE_UPLOADS, idempotentUploads: true, metadataSaved: true },
           driveFolderName: folderName,
           photosFolderReady: photosOk,
           videosFolderReady: videosOk,
@@ -360,6 +326,7 @@ function setStatus_(uploadId, status, extraData) {
     extraData || {}
   );
 
+  if (status === 'COMPLETED') { delete data.filename; delete data.folder; delete data.message; }
   const jsonString = JSON.stringify(data);
   const key = STATUS_PREFIX + uploadId;
 
@@ -411,6 +378,10 @@ function getStatus_(uploadId) {
       return { uploadId: uploadId, status: 'PENDING', message: 'Statut expiré.' };
     }
 
+    if (statusData.status === 'PROCESSING') {
+      const until = Number(JSON.parse(PropertiesService.getScriptProperties().getProperty('active_uploads') || '{}')[uploadId] || 0);
+      if (until < Date.now()) return { uploadId, status: 'RETRY', retryAfter: 5 };
+    }
     return statusData;
 
   } catch (parseError) {
@@ -431,27 +402,21 @@ function deleteStatus_(uploadId) {
  * Supprime les anciens statuts de PropertiesService.
  */
 function cleanupOldStatuses() {
-  const scriptProperties = PropertiesService.getScriptProperties();
-  const allProperties = scriptProperties.getProperties();
-  const now = Date.now();
-  let deletedCount = 0;
-
-  Object.keys(allProperties).forEach(function (key) {
-    if (key.indexOf(STATUS_PREFIX) !== 0) return;
-
+  const props = PropertiesService.getScriptProperties();
+  const all = props.getProperties();
+  const receipts = [];
+  for (const key of Object.keys(all)) {
+    if (key.indexOf(STATUS_PREFIX) !== 0) continue;
     try {
-      const data = JSON.parse(allProperties[key]);
-      if (data.expiresAt && Number(data.expiresAt) < now) {
-        scriptProperties.deleteProperty(key);
-        deletedCount++;
-      }
-    } catch (error) {
-      scriptProperties.deleteProperty(key);
-      deletedCount++;
-    }
-  });
-
-  Logger.log('Statuts supprimés : ' + deletedCount);
+      const data = JSON.parse(all[key]);
+      if (data.expiresAt && data.expiresAt < Date.now()) props.deleteProperty(key);
+      else if (data.status === 'COMPLETED') receipts.push({ key, date: data.updatedAt || '' });
+    } catch (err) { props.deleteProperty(key); }
+  }
+  // Keep below Apps Script's 500 KB property-store ceiling. Cached receipts
+  // and deterministic file lookup still protect against duplicate retries.
+  receipts.sort((a, b) => b.date.localeCompare(a.date));
+  for (const receipt of receipts.slice(650)) props.deleteProperty(receipt.key);
 }
 
 
@@ -615,7 +580,8 @@ function getPublicErrorMessage_(error, diagnostics) {
     'La vidéo dépasse la taille maximale de 25 Mo.',
     'La vidéo dépasse la durée maximale de 60 secondes.',
     'Le fichier reçu est vide.',
-    'Extension de fichier inconnue.'
+    'Extension de fichier inconnue.',
+    'Le contenu du fichier ne correspond pas au format annoncé.'
   ];
 
   if (allowedMessages.indexOf(message) !== -1) {
