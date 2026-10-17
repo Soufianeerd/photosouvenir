@@ -581,3 +581,55 @@ body.is-scrollable { overflow: auto; }
   .stage__bottom, .stage__top { max-width: 560px; margin: 0 auto; }
   .stage__top { left: 0; right: 0; padding: 0 1rem; }
 }
+
+
+/* Reliability release: native hidden always wins over layout declarations. */
+[hidden] { display: none !important; }
+.iconbtn svg, .ghostbtn svg, .btn__icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.btn__icon { display: inline-flex; align-items: center; }
+.btn { font-size: 0.78rem; letter-spacing: 0.07em; line-height: 1.45; }
+.btn--half { font-size: 0.78rem; min-height: 54px; }
+.iconbtn:disabled, .shutter:disabled { opacity: 0.4; cursor: wait; }
+.stage__top-right { align-items: center; }
+.stage__top { pointer-events: none; }
+.stage__top button { pointer-events: auto; }
+.camera-label { color: #fff; background: #0009; border-radius: 20px; padding: 7px 10px; font-size: 0.72rem; max-width: 150px; }
+.micro-status { color: white; font-size: 0.78rem; background: #000a; padding: 6px 12px; border-radius: 20px; }
+.flash.is-lighting { opacity: 0.97; z-index: 9; transition: none; }
+/* The capture itself remains full-screen. Preview reserves space for actions,
+   so faces and frame ornaments are visible without hiding any controls. */
+#screenPreview .mediastage { top: calc(var(--safe-t) + 4.5rem); bottom: calc(var(--safe-b) + 15rem); }
+.mediastage__media { object-fit: contain; }
+.stage__bottom--preview.is-peeking .caption, .stage__bottom--preview.is-peeking .actionbar { opacity: 1; transform: none; pointer-events: auto; }
+#screenPreview .stage__scrim { display: none; }
+#screenPreview .stage__bottom { background: #101010; padding-top: 0.35rem; }
+#screenPreview .filter-name { max-width: 70%; }
+.home { padding-bottom: calc(var(--safe-b) + 6rem); }
+.home__sub { line-height: 1.7; }
+.queue-panel { position: fixed; bottom: calc(var(--safe-b) + 0.5rem); left: 50%; transform: translateX(-50%); width: calc(100% - 2rem); max-width: 440px; z-index: 40; background: #fff; border: 1px solid #d8c8b1; border-radius: 12px; box-shadow: 0 5px 25px #2d121417; padding: 0.85rem 1rem; max-height: 50vh; overflow-y: auto; font-size: 0.8rem; }
+.queue-panel summary { font-weight: 600; color: var(--bordeaux); cursor: pointer; min-height: 24px; }
+.queue-panel p { margin: 0.7rem 0; line-height: 1.6; color: var(--muted); }
+.queue-panel ul { list-style: none; }
+.queue-panel li { display: grid; gap: 0.4rem; padding: 0.8rem 0; border-top: 1px solid var(--cream-dark); }
+.queue-panel small { line-height: 1.5; color: var(--muted); }
+.queue-panel li button { min-height: 44px; background: var(--cream); color: var(--bordeaux); border: 1px solid var(--cream-dark); border-radius: 6px; font: inherit; cursor: pointer; }
+@media (max-height: 580px) and (orientation: landscape) {
+  #screenPreview .mediastage { right: 47%; top: 3.5rem; bottom: 0.5rem; }
+  #screenPreview .stage__bottom { left: 55%; bottom: 0.6rem; gap: 0.45rem; }
+  .filter-chip { flex-basis: 48px; height: 48px; }
+  .actionbar { flex-direction: column; gap: 0.3rem; }
+  .btn--half { min-height: 44px; padding: 0.5rem; }
+  .stage__bottom { gap: 0.3rem; bottom: 0.5rem; }
+  .stage__hint { font-size: 0.68rem; }
+}
+@media (max-width: 350px) {
+  .camera-label { font-size: 0.65rem; padding: 6px; max-width: 100px; }
+  .stage__top { left: 0.5rem; right: 0.5rem; gap: 0.2rem; }
+  .stage__top-right { gap: 0.2rem; }
+  .btn--half { font-size: 0.7rem; }
+}
+
+.preview-controls { pointer-events: auto; flex-wrap: wrap; justify-content: flex-end; max-width: 48%; gap: 4px; }
+.preview-controls button { min-height: 36px; border: 1px solid #fff5; border-radius: 8px; background: #202020; color: white; padding: 5px 8px; font: 500 11px var(--font-sans); }
+#screenPreview .stage__top { gap: 5px; }
+#screenPreview .filter-name { flex-shrink: 1; max-width: 42%; }

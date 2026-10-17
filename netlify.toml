@@ -1,9 +1,8 @@
-# Site statique : aucun build, aucune dépendance.
-# Le dossier publié est la racine du dépôt.
+# Site statique : publication explicite des seuls fichiers publics dans dist.
 
 [build]
-  publish = "."
-  command = ""
+  publish = "dist"
+  command = "node tools/build.mjs"
 
 # HTML : jamais mis en cache, pour éviter de servir une ancienne version
 # après un déploiement.
@@ -70,3 +69,6 @@
     X-Frame-Options = "SAMEORIGIN"
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "camera=(self), microphone=(self), geolocation=()"
+
+[build.environment]
+  NODE_VERSION = "22"

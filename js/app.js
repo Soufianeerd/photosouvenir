@@ -38,7 +38,7 @@ const CONFIG = {
    * proprement au budget atteint plutôt que de dégrader toutes les vidéos
    * pour absorber le pire cas.
    */
-  VIDEO_BITS_PER_SECOND: 2800000,
+  VIDEO_BITS_PER_SECOND: 1800000,
   AUDIO_BITS_PER_SECOND: 96000,
   RECORD_SIZE_BUDGET_BYTES: 18 * 1024 * 1024,
 
@@ -54,7 +54,7 @@ const CONFIG = {
   PHOTO_MAX_LONG_EDGE: 2048,
   JPEG_QUALITY: 0.88,
 
-  UPLOAD_POLL_INTERVAL_MS: 1500,
+  UPLOAD_POLL_INTERVAL_MS: 4000,
   UPLOAD_TIMEOUT_MS: 240000
 };
 
@@ -76,6 +76,11 @@ const BACKEND_PHOTO_MIME_ALLOWLIST = ['image/jpeg', 'image/png', 'image/webp'];
 
 const state = {
   guestName: '',
+  mediaId: 0, cameraSession: 0, audioGeneration: 0, cameraChanging: false,
+  cameraReady: false, recordStarting: false, recordStopping: false, recordRequestId: 0,
+  discardRecording: false, recordDimensions: null, screenFlashOn: false,
+  doneUploadId: null,
+
   message: '',
 
   videoStream: null,       // flux vidéo courant (change au basculement)
@@ -115,6 +120,7 @@ const state = {
 
   previewMuted: false,
   isBusy: false,
+  sendPreparing: false,
   isSent: false,
   cancelled: false,       /* l'invité a touché « Annuler » */
   burnCancelled: false,   /* incrustation du filtre interrompue */
@@ -242,7 +248,7 @@ function buildFileName(mime) {
 }
 
 function newUploadId() {
-  return 'up-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  return 'up-' + (window.crypto?.randomUUID ? window.crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
 }
 
 /*
@@ -377,6 +383,10 @@ function showScreen(name) {
   if (themeMeta) themeMeta.setAttribute('content', light ? '#F9F7F2' : '#000000');
 
   window.scrollTo(0, 0);
+  const focusTarget = target.querySelector('h1, h2, [data-screen-focus]');
+  if (focusTarget) { focusTarget.setAttribute('tabindex', '-1'); focusTarget.focus({ preventScroll: true }); }
+  const queuePanel = $('queuePanel');
+  if (queuePanel) queuePanel.hidden = !light || !pendingCount;
 }
 
 
@@ -574,6 +584,8 @@ function paintOverlay(filter) {
 }
 
 function selectFilter(index, scrollIntoView) {
+  if (state.isBusy) return;
+  if (state.shareURL) { el.previewImg.src = state.previewURL; revokeShareURL(); }
   const list = availableFilters();
   if (!list.length) return;
   state.filterIndex = Math.max(0, Math.min(index, list.length - 1));
@@ -622,18 +634,10 @@ function currentFilter() {
  * pour laisser voir le rendu complet, puis reviennent seuls.
  */
 let peekTimer = null;
-function peekFilter(hold) {
-  const bottom = el.filterStrip.parentElement;
-  bottom.classList.add('is-peeking');
-  el.screenPreview.classList.add('is-peeking');
-
+function peekFilter() {
   clearTimeout(peekTimer);
-  if (hold) return;
-
-  peekTimer = setTimeout(() => {
-    bottom.classList.remove('is-peeking');
-    el.screenPreview.classList.remove('is-peeking');
-  }, 1600);
+  el.filterStrip.parentElement.classList.remove('is-peeking');
+  el.screenPreview.classList.remove('is-peeking');
 }
 
 /*
@@ -670,16 +674,17 @@ function stopVideoStream() {
 }
 
 function stopAudioStream() {
-  if (state.audioStream) {
-    state.audioStream.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} });
-    state.audioStream = null;
-  }
-  /* Sans cette remise à zéro, une nouvelle capture réutiliserait la promesse
-     déjà résolue et donc un flux micro éteint : vidéo sans son. */
+  state.audioGeneration++;
+  if (state.audioStream) state.audioStream.getTracks().forEach(t => t.stop());
+  state.audioStream = null;
   state.audioPromise = null;
 }
 
 function stopAllStreams() {
+  state.cameraSession++;
+  state.recordRequestId++;
+  state.recordStarting = false;
+  state.cameraReady = false;
   stopCanvasPipeline();
   stopVideoStream();
   stopAudioStream();
@@ -687,111 +692,143 @@ function stopAllStreams() {
   state.torchOn = false;
   el.btnTorch.hidden = true;
   el.btnTorch.classList.remove('is-on');
+  el.btnShutter.disabled = true;
 }
 
-async function requestVideoStream(facingMode) {
-  const attempts = [
-    { facingMode: { exact: facingMode }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-    { facingMode: { ideal: facingMode }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-    { facingMode: facingMode },
-    true
-  ];
+function disposeStream(stream) { if (stream) stream.getTracks().forEach(t => t.stop()); }
 
-  let lastError = null;
+async function requestVideoStream(facingMode, strict) {
+  const attempts = strict
+    ? [{ facingMode: { exact: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } }]
+    : [{ facingMode: { ideal: facingMode }, width: { ideal: 1920 }, height: { ideal: 1080 } }, true];
+  let lastError;
   for (const video of attempts) {
-    try {
-      return await navigator.mediaDevices.getUserMedia({ video: video, audio: false });
-    } catch (err) {
+    try { return await navigator.mediaDevices.getUserMedia({ video, audio: false }); }
+    catch (err) {
       lastError = err;
+      if (!['OverconstrainedError', 'NotFoundError'].includes(err.name)) throw err;
     }
   }
   throw lastError;
 }
 
-async function startCamera() {
-  el.cameraBlocker.hidden = true;
-
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    showCameraBlocker(
-      'Caméra non disponible',
-      "Ce navigateur ne permet pas d'ouvrir la caméra. Vous pouvez choisir une photo ou une vidéo depuis votre galerie."
-    );
-    return;
-  }
-
-  /* La vidéo est demandée EN PREMIER : l'aperçu apparaît sans attendre
-     l'autorisation du micro, qui est obtenue ensuite en arrière-plan. */
-  try {
-    stopVideoStream();
-    state.videoStream = await requestVideoStream(state.facingMode);
-  } catch (err) {
-    handleCameraError(err);
-    return;
-  }
-
-  el.cameraFeed.srcObject = state.videoStream;
-  el.cameraFeed.classList.toggle('is-mirrored', state.facingMode === 'user');
+async function attachCamera(stream, requested, session) {
+  if (session !== state.cameraSession) { disposeStream(stream); return false; }
+  state.videoStream = stream;
+  const track = stream.getVideoTracks()[0];
+  track.addEventListener('ended', () => {
+    if (state.videoStream === stream && session === state.cameraSession) {
+      state.cameraReady = false; el.btnShutter.disabled = true;
+      if (state.isRecording) stopRecording();
+      showCameraBlocker('Caméra interrompue', 'La caméra a été interrompue. Réessayez ou choisissez un fichier.');
+    }
+  }, { once: true });
+  const actual = track.getSettings ? track.getSettings().facingMode : null;
+  state.facingMode = actual || requested;
   state.zoom = 1;
+  el.cameraFeed.srcObject = stream;
   applyCameraTransform();
-  try { await el.cameraFeed.play(); } catch (e) {}
-
+  try { await el.cameraFeed.play(); }
+  catch (err) { if (session === state.cameraSession) throw err; return false; }
+  if (session !== state.cameraSession) { disposeStream(stream); return false; }
+  // Metadata may precede the first decoded frame. Never enable an empty capture.
+  if (!el.cameraFeed.videoWidth || el.cameraFeed.readyState < 2) {
+    await new Promise((resolve, reject) => {
+      let timer;
+      const finish = (error) => {
+        clearTimeout(timer); el.cameraFeed.removeEventListener('loadeddata', ready);
+        error ? reject(error) : resolve();
+      };
+      const ready = () => finish();
+      el.cameraFeed.addEventListener('loadeddata', ready, { once: true });
+      timer = setTimeout(() => finish(new Error('La caméra ne fournit pas d’image.')), 12000);
+    });
+  }
+  if (session !== state.cameraSession) { disposeStream(stream); return false; }
+  state.cameraReady = true;
+  el.btnShutter.disabled = false;
   setupTorchButton();
-  announce('Caméra prête.');
-
-  ensureAudioStream();
-  preloadAllFilters();
+  $('cameraStatus').textContent = state.facingMode === 'user' ? 'Caméra avant' : 'Caméra arrière';
+  return true;
 }
 
-/*
- * Micro : demandé une seule fois et conservé pour toute la session.
- * Il ne doit jamais être coupé, sinon le basculement de caméra
- * interromprait le son en pleine vidéo.
- */
+async function startCamera() {
+  stopAllStreams();
+  const session = state.cameraSession;
+  el.cameraBlocker.hidden = true;
+  el.btnShutter.disabled = true;
+  $('cameraStatus').textContent = 'Ouverture de la caméra…';
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showCameraBlocker('Caméra non disponible', 'Choisissez une photo ou une vidéo dans votre galerie.'); return;
+  }
+  try {
+    const stream = await requestVideoStream(state.facingMode, false);
+    if (await attachCamera(stream, state.facingMode, session)) {
+      announce('Caméra prête.');
+      preloadAllFilters();
+    }
+  } catch (err) {
+    if (session !== state.cameraSession) return;
+    stopVideoStream(); state.cameraReady = false; handleCameraError(err);
+  }
+}
+
 function ensureAudioStream() {
   if (state.audioStream) return Promise.resolve(state.audioStream);
   if (state.audioPromise) return state.audioPromise;
-
-  state.audioPromise = navigator.mediaDevices.getUserMedia({ audio: true })
-    .then((stream) => { state.audioStream = stream; return stream; })
-    .catch((err) => {
-      console.warn('[camera] micro indisponible :', err && err.name);
+  const generation = state.audioGeneration;
+  let promise;
+  promise = navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(stream => {
+      if (generation !== state.audioGeneration) { disposeStream(stream); return null; }
+      state.audioStream = stream;
+      $('microStatus').textContent = 'Micro activé';
+      return stream;
+    })
+    .catch(err => {
+      console.info('[camera] micro indisponible :', err.name);
+      if (generation === state.audioGeneration) $('microStatus').textContent = 'Sans son — micro indisponible';
       return null;
-    });
-
-  return state.audioPromise;
+    })
+    .finally(() => { if (state.audioPromise === promise) state.audioPromise = null; });
+  state.audioPromise = promise;
+  return promise;
 }
 
-/*
- * Basculement avant / arrière.
- * Pendant un enregistrement, seule la piste vidéo est remplacée : le canvas
- * continue de dessiner et le MediaRecorder n'est jamais interrompu.
- */
 async function switchCamera() {
-  const next = state.facingMode === 'user' ? 'environment' : 'user';
+  if (state.cameraChanging || state.isBusy || state.recordStarting || !state.videoStream) return;
+  state.cameraChanging = true;
+  const session = state.cameraSession;
   const previous = state.facingMode;
-
+  const next = previous === 'user' ? 'environment' : 'user';
   el.btnSwitchCamera.disabled = true;
+  state.cameraReady = false;
+  el.btnShutter.disabled = !state.isRecording;
   try {
-    const newStream = await requestVideoStream(next);
+    let stream;
+    try { stream = await requestVideoStream(next, true); }
+    catch (err) {
+      if (session !== state.cameraSession) return;
+      if (!['NotReadableError', 'AbortError'].includes(err.name)) throw err;
+      // iOS and some Android devices require exclusive camera access.
+      stopVideoStream();
+      stream = await requestVideoStream(next, true);
+    }
+    if (session !== state.cameraSession) { disposeStream(stream); return; }
+    const actual = stream.getVideoTracks()[0].getSettings?.().facingMode;
+    if (actual && actual !== next) { disposeStream(stream); throw new Error('Objectif indisponible.'); }
     stopVideoStream();
-    state.videoStream = newStream;
-    state.facingMode = next;
-
-    el.cameraFeed.srcObject = newStream;
-    el.cameraFeed.classList.toggle('is-mirrored', next === 'user');
-    state.zoom = 1;
-    applyCameraTransform();
-    try { await el.cameraFeed.play(); } catch (e) {}
-
-    setupTorchButton();
-    announce(next === 'user' ? 'Caméra avant.' : 'Caméra arrière.');
+    if (await attachCamera(stream, next, session)) announce(next === 'user' ? 'Caméra avant.' : 'Caméra arrière.');
   } catch (err) {
-    state.facingMode = previous;
-    console.error('[camera] basculement impossible :', err);
-    toast("Impossible de changer de caméra sur cet appareil.");
-    if (!state.videoStream) startCamera();
+    if (session !== state.cameraSession) return;
+    toast('Cet objectif n’est pas disponible. Votre caméra précédente est conservée.');
+    if (!state.videoStream) {
+      try { await attachCamera(await requestVideoStream(previous, false), previous, session); }
+      catch (restoreError) { if (session === state.cameraSession) handleCameraError(restoreError); }
+    } else { state.cameraReady = true; el.btnShutter.disabled = false; }
   } finally {
-    el.btnSwitchCamera.disabled = false;
+    state.cameraChanging = false;
+    el.btnSwitchCamera.disabled = state.isRecording && !state.canvasPipelineActive;
   }
 }
 
@@ -821,25 +858,44 @@ function showCameraBlocker(title, text) {
 }
 
 function setupTorchButton() {
-  const track = state.videoStream && state.videoStream.getVideoTracks()[0];
-  const caps = track && track.getCapabilities ? track.getCapabilities() : null;
-  const supported = !!(caps && caps.torch);
-  el.btnTorch.hidden = !supported;
-  if (!supported) state.torchOn = false;
+  const track = state.videoStream?.getVideoTracks()[0];
+  let caps = {};
+  try { caps = track?.getCapabilities?.() || {}; } catch (e) {}
+  const supported = !!caps.torch;
+  const frontScreen = state.facingMode === 'user' && state.captureMode === 'photo';
+  state.torchOn = !!(supported && track.getSettings?.().torch);
+  el.btnTorch.hidden = !supported && !frontScreen;
+  el.btnTorch.classList.toggle('is-on', supported ? state.torchOn : state.screenFlashOn);
+  el.btnTorch.setAttribute('aria-pressed', String(supported ? state.torchOn : state.screenFlashOn));
+  el.btnTorch.setAttribute('aria-label', supported
+    ? (state.torchOn ? 'Éteindre la lampe' : 'Activer la lampe')
+    : (state.screenFlashOn ? 'Désactiver l’éclairage écran' : 'Activer l’éclairage écran'));
+  el.btnTorch.title = supported ? 'Lampe de la caméra' : 'Éclairage écran pour le selfie';
 }
 
 el.btnTorch.addEventListener('click', async () => {
-  const track = state.videoStream && state.videoStream.getVideoTracks()[0];
-  if (!track || !track.applyConstraints) return;
-  try {
-    state.torchOn = !state.torchOn;
-    await track.applyConstraints({ advanced: [{ torch: state.torchOn }] });
-    el.btnTorch.classList.toggle('is-on', state.torchOn);
-    el.btnTorch.setAttribute('aria-label', state.torchOn ? 'Éteindre la lampe' : 'Activer la lampe');
-  } catch (e) {
-    el.btnTorch.hidden = true;
+  if (state.cameraChanging || state.isBusy) return;
+  const track = state.videoStream?.getVideoTracks()[0];
+  let supported = false;
+  try { supported = !!track?.getCapabilities?.().torch; } catch (e) {}
+  if (!supported && state.facingMode === 'user') {
+    state.screenFlashOn = !state.screenFlashOn; setupTorchButton();
+    toast(state.screenFlashOn ? 'Éclairage écran activé pour la prochaine photo.' : 'Éclairage écran désactivé.'); return;
   }
+  if (!track?.applyConstraints) return;
+  el.btnTorch.disabled = true;
+  try {
+    const enabled = !state.torchOn;
+    await track.applyConstraints({ advanced: [{ torch: enabled }] });
+    if (track !== state.videoStream?.getVideoTracks()[0]) return;
+    state.torchOn = enabled;
+    el.btnTorch.classList.toggle('is-on', enabled);
+    el.btnTorch.setAttribute('aria-pressed', String(enabled));
+    el.btnTorch.setAttribute('aria-label', enabled ? 'Éteindre la lampe' : 'Activer la lampe');
+  } catch (err) { state.torchOn = false; el.btnTorch.hidden = true; toast('La lampe n’est pas disponible sur cet appareil.'); }
+  finally { el.btnTorch.disabled = false; }
 });
+
 
 el.btnSwitchCamera.addEventListener('click', switchCamera);
 el.btnRetryCamera.addEventListener('click', startCamera);
@@ -1008,7 +1064,7 @@ function stopCanvasPipeline() {
 /* ───────────────────────── MODE PHOTO / VIDÉO ───────────────────────── */
 
 function setCaptureMode(mode) {
-  if (state.isRecording) return;
+  if (state.isRecording || state.recordStarting) return;
   state.captureMode = mode;
   const isPhoto = mode === 'photo';
 
@@ -1024,14 +1080,26 @@ function setCaptureMode(mode) {
   el.btnShutter.setAttribute('aria-label', isPhoto
     ? 'Prendre une photo. Maintenez pour enregistrer une vidéo.'
     : "Démarrer ou arrêter l'enregistrement vidéo.");
+  $('microStatus').hidden = isPhoto;
+  if (state.videoStream) setupTorchButton();
 }
 
 el.modePhoto.addEventListener('click', () => setCaptureMode('photo'));
 el.modeVideo.addEventListener('click', () => {
   setCaptureMode('video');
-  startCanvasPipeline();   /* prêt à enregistrer instantanément */
+  ensureAudioStream();
+  startCanvasPipeline();
 });
 
+
+[el.modePhoto, el.modeVideo].forEach(button => button.addEventListener('keydown', event => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  event.preventDefault();
+  const mode = button === el.modePhoto ? 'video' : 'photo';
+  setCaptureMode(mode);
+  (mode === 'photo' ? el.modePhoto : el.modeVideo).focus();
+  if (mode === 'video') ensureAudioStream();
+}));
 
 /* ───────────────────────── DÉCLENCHEUR ───────────────────────── */
 
@@ -1044,7 +1112,7 @@ el.btnShutter.addEventListener('contextmenu', (e) => e.preventDefault());
 el.btnShutter.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   if (state.isBusy) return;
-  if (!state.videoStream) { toast("La caméra n'est pas active."); return; }
+  if (!state.videoStream || (!state.cameraReady && !state.isRecording)) { toast('La caméra se prépare…'); return; }
   try { el.btnShutter.setPointerCapture(e.pointerId); } catch (err) {}
 
   pressActive = true;
@@ -1070,6 +1138,7 @@ function endPress() {
   clearTimeout(pressTimer);
 
   if (state.captureMode === 'video') {
+    if (state.recordStarting) { state.recordRequestId++; state.recordStarting = false; return; }
     state.isRecording ? stopRecording() : startRecording();
     return;
   }
@@ -1081,6 +1150,7 @@ el.btnShutter.addEventListener('pointerup', (e) => { e.preventDefault(); endPres
 el.btnShutter.addEventListener('pointercancel', () => {
   pressActive = false;
   clearTimeout(pressTimer);
+  state.recordRequestId++; state.recordStarting = false;
   if (state.isRecording) stopRecording();
 });
 
@@ -1119,7 +1189,14 @@ async function takePhoto() {
   if (state.isBusy) return;
   state.isBusy = true;
   try {
+    if (!state.cameraReady) throw new Error('Caméra non prête.');
+    const session = state.cameraSession;
+    if (state.screenFlashOn && state.facingMode === 'user') {
+      el.captureFlash.classList.add('is-lighting');
+      await new Promise(resolve => setTimeout(resolve, 350));
+    }
     const source = await grabPhotoSource();
+    if (session !== state.cameraSession) { if (source.close) source.close(); return; }
     const srcW = source.width || source.videoWidth;
     const srcH = source.height || source.videoHeight;
     if (!srcW || !srcH) throw new Error('Image vide.');
@@ -1157,6 +1234,7 @@ async function takePhoto() {
     console.error('[photo]', err);
     toast("La photo n'a pas pu être prise. Réessayez.");
   } finally {
+    el.captureFlash.classList.remove('is-lighting');
     state.isBusy = false;
   }
 }
@@ -1176,8 +1254,17 @@ function pickVideoMimeType() {
   return null;
 }
 
-function startRecording() {
-  if (state.isRecording || !state.videoStream) return;
+async function startRecording() {
+  if (state.isRecording || state.recordStarting || state.recordStopping || !state.videoStream || !state.cameraReady) return;
+  state.recordStarting = true;
+  const requestId = ++state.recordRequestId;
+  try {
+  $('microStatus').hidden = false;
+  $('microStatus').textContent = state.audioStream ? 'Micro activé' : 'Préparation du micro…';
+  await ensureAudioStream();
+  if (requestId !== state.recordRequestId || !state.videoStream || (longPressFired && !pressActive && state.captureMode === 'photo')) return;
+  state.discardRecording = false;
+  state.recordDimensions = null;
 
   if (typeof MediaRecorder === 'undefined') {
     toast("L'enregistrement vidéo n'est pas pris en charge par ce navigateur. Utilisez le mode photo ou votre galerie.");
@@ -1217,6 +1304,9 @@ function startRecording() {
     console.info('[video] pipeline canvas indisponible : bascule caméra désactivée pendant la vidéo.');
   }
 
+  state.recordDimensions = state.recordCanvas
+    ? { width: state.recordCanvas.width, height: state.recordCanvas.height }
+    : { width: el.cameraFeed.videoWidth || 720, height: el.cameraFeed.videoHeight || 1280 };
   const options = {
     videoBitsPerSecond: CONFIG.VIDEO_BITS_PER_SECOND,
     audioBitsPerSecond: CONFIG.AUDIO_BITS_PER_SECOND
@@ -1257,6 +1347,7 @@ function startRecording() {
     console.error('[video] erreur MediaRecorder :', e);
     toast("L'enregistrement a été interrompu.");
     cleanupRecordingUI();
+    stopCanvasPipeline();
   };
 
   state.mediaRecorder.onstop = () => {
@@ -1269,20 +1360,11 @@ function startRecording() {
       Math.max(1, Math.round((Date.now() - state.recordStartedAt) / 1000))
     );
 
-    let width, height;
-    if (state.recordCanvas) {
-      width = state.recordCanvas.width;
-      height = state.recordCanvas.height;
-    } else {
-      const settings = state.videoStream.getVideoTracks()[0].getSettings
-        ? state.videoStream.getVideoTracks()[0].getSettings() : {};
-      width = settings.width || el.cameraFeed.videoWidth || 720;
-      height = settings.height || el.cameraFeed.videoHeight || 1280;
-    }
-
+    const { width, height } = state.recordDimensions || { width: 720, height: 1280 };
     cleanupRecordingUI();
     stopCanvasPipeline();
 
+    if (state.discardRecording) { state.discardRecording = false; return; }
     if (!blob.size) { toast('La vidéo enregistrée est vide. Réessayez.'); return; }
 
     if (state.autoStopped) {
@@ -1308,14 +1390,18 @@ function startRecording() {
   el.recPill.hidden = false;
   el.recPill.classList.remove('is-warning');
   el.recTimer.textContent = '0:00';
-  el.captureHint.textContent = canvasOk
-    ? "Relâchez pour arrêter · Vous pouvez changer de caméra"
-    : "Relâchez pour arrêter l'enregistrement";
+  el.captureHint.textContent = state.captureMode === 'video'
+    ? 'Touchez le bouton rouge pour arrêter (60 s max)'
+    : 'Relâchez pour arrêter';
   announce("Enregistrement vidéo démarré. Durée maximale : 60 secondes.");
 
   state.recordTimerId = setInterval(tickRecording, 200);
   requestWakeLock();
   buzz(28);
+  } finally {
+    state.recordStarting = false;
+    if (!state.isRecording && state.captureMode === 'photo') stopAudioStream();
+  }
 }
 
 /* L'écran ne doit pas s'éteindre pendant qu'on filme. */
@@ -1354,6 +1440,7 @@ function tickRecording() {
 
 function stopRecording() {
   if (!state.isRecording) return;
+  state.recordStopping = true; el.btnShutter.disabled = true;
   state.isRecording = false;
   buzz([14, 60, 14]);
   clearInterval(state.recordTimerId);
@@ -1361,7 +1448,9 @@ function stopRecording() {
 }
 
 function cleanupRecordingUI() {
+  state.recordStopping = false;
   state.isRecording = false;
+  el.btnShutter.disabled = !state.cameraReady;
   clearInterval(state.recordTimerId);
   releaseWakeLock();
   el.btnShutter.classList.remove('is-recording');
@@ -1374,7 +1463,10 @@ function cleanupRecordingUI() {
 
 /* ───────────────────────── GALERIE (SECOURS) ───────────────────────── */
 
-function openGallery() { el.galleryInput.click(); }
+function openGallery() {
+  if (state.isRecording || state.recordStarting || state.isBusy) { toast('Terminez la prise de vue avant d’ouvrir la galerie.'); return; }
+  el.galleryInput.click();
+}
 el.btnGallery.addEventListener('click', openGallery);
 el.btnBlockerGallery.addEventListener('click', openGallery);
 
@@ -1408,7 +1500,7 @@ el.galleryInput.addEventListener('change', async () => {
       setCapturedMedia(blob, 'photo', w, h, 0);
     } else {
       const meta = await readVideoMetadata(file);
-      if (meta.duration > CONFIG.MAX_VIDEO_SECONDS + 1) {
+      if (meta.duration > CONFIG.MAX_VIDEO_SECONDS) {
         toast(`Cette vidéo dure ${Math.round(meta.duration)} s. La durée maximale est de 60 secondes.`);
         return;
       }
@@ -1416,33 +1508,34 @@ el.galleryInput.addEventListener('change', async () => {
         toast("Ce format vidéo n'est pas accepté. Formats acceptés : MP4, WebM, MOV.");
         return;
       }
-      setCapturedMedia(file, 'video', meta.width, meta.height, Math.round(meta.duration) || 1);
+      setCapturedMedia(file, 'video', meta.width, meta.height, meta.duration || 1);
     }
     goToPreview();
   } catch (err) {
     console.error('[galerie]', err);
-    toast("Ce fichier n'a pas pu être ouvert.");
+    toast(isVideo && err.message ? err.message : 'Cette image ne peut pas être lue. Choisissez une photo JPEG ou PNG.');
   }
 });
 
 function readVideoMetadata(file) {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
-    video.preload = 'metadata';
-    video.muted = true;
-    video.playsInline = true;
+    video.preload = 'metadata'; video.muted = true; video.playsInline = true;
     const url = URL.createObjectURL(file);
+    let settled = false;
+    const timer = setTimeout(() => done(null, new Error('La vidéo met trop de temps à s’ouvrir. Choisissez un autre fichier.')), 15000);
     const done = (result, error) => {
-      URL.revokeObjectURL(url);
-      video.removeAttribute('src');
+      if (settled) return; settled = true; clearTimeout(timer);
+      URL.revokeObjectURL(url); video.removeAttribute('src');
       error ? reject(error) : resolve(result);
     };
-    video.onloadedmetadata = () => done({
-      duration: Number.isFinite(video.duration) ? video.duration : 0,
-      width: video.videoWidth || 720,
-      height: video.videoHeight || 1280
-    });
-    video.onerror = () => done(null, new Error('Vidéo illisible.'));
+    video.onloadedmetadata = () => {
+      if (!Number.isFinite(video.duration) || video.duration <= 0) {
+        done(null, new Error('La durée de cette vidéo ne peut pas être vérifiée. Choisissez un MP4 ou filmez depuis cette page.')); return;
+      }
+      done({ duration: video.duration, width: video.videoWidth || 720, height: video.videoHeight || 1280 });
+    };
+    video.onerror = () => done(null, new Error('Cette vidéo ne peut pas être lue. Choisissez un autre fichier.'));
     video.src = url;
   });
 }
@@ -1451,6 +1544,11 @@ function readVideoMetadata(file) {
 /* ───────────────────────── APERÇU ───────────────────────── */
 
 function setCapturedMedia(blob, type, width, height, duration) {
+  if (!blob || !blob.size) throw new Error('Média vide.');
+  state.mediaId++;
+  clearTimeout(speculativeTimer);
+  finalCache = { key: null, blob: null, burned: false };
+  state.sharePromise = null;
   revokePreviewURL();
   revokeShareURL();
   state.shareFile = null;
@@ -1464,29 +1562,46 @@ function setCapturedMedia(blob, type, width, height, duration) {
   state.filterIndex = 0;
 }
 
+function fitMediaBox() {
+  if (!state.mediaWidth || !state.mediaHeight) return;
+  const stage = el.mediaStage.getBoundingClientRect();
+  const width = stage.width || innerWidth;
+  const height = stage.height || innerHeight;
+  const ratio = state.mediaWidth / state.mediaHeight;
+  const w = Math.min(width, height * ratio);
+  el.mediaBox.style.width = Math.round(w) + 'px';
+  el.mediaBox.style.height = Math.round(w / ratio) + 'px';
+}
+window.addEventListener('resize', fitMediaBox);
+
 function goToPreview() {
+  state.isBusy = false;
   stopAllStreams();
+  state.recordRequestId++;
   state.previewURL = URL.createObjectURL(state.mediaBlob);
+  fitMediaBox();
 
   if (state.mediaType === 'photo') {
     el.previewVideo.hidden = true;
     el.previewVideo.removeAttribute('src');
-    el.previewImg.src = state.previewURL;
     el.previewImg.hidden = false;
     el.previewImg.onload = () => {
       state.mediaWidth = el.previewImg.naturalWidth;
       state.mediaHeight = el.previewImg.naturalHeight;
+      fitMediaBox();
     };
+    el.previewImg.src = state.previewURL;
   } else {
     el.previewImg.hidden = true;
     el.previewImg.removeAttribute('src');
-    el.previewVideo.src = state.previewURL;
     el.previewVideo.hidden = false;
     el.previewVideo.onloadedmetadata = () => {
       state.mediaWidth = el.previewVideo.videoWidth || state.mediaWidth;
       state.mediaHeight = el.previewVideo.videoHeight || state.mediaHeight;
+      fitMediaBox();
       startPreviewPlayback();
     };
+    el.previewVideo.src = state.previewURL;
   }
 
   el.captionInput.value = state.message;
@@ -1499,6 +1614,8 @@ function goToPreview() {
      tant que l'écran est masqué. */
   buildFilterStrip();
   showScreen('preview');
+  syncPlaybackControls();
+  fitMediaBox();
   selectFilter(0, false);
   announce('Aperçu de votre souvenir. Faites glisser pour découvrir les filtres.');
 }
@@ -1522,6 +1639,22 @@ function startPreviewPlayback() {
         .catch(() => announce('Touchez la vidéo pour la lire.'));
     });
 }
+
+function syncPlaybackControls() {
+  const video = state.mediaType === 'video';
+  $('btnPreviewPlay').hidden = !video; $('btnPreviewSound').hidden = !video;
+  $('btnPreviewPlay').textContent = el.previewVideo.paused ? 'Lire' : 'Pause';
+  $('btnPreviewSound').textContent = el.previewVideo.muted ? 'Activer le son' : 'Couper le son';
+}
+$('btnPreviewPlay').addEventListener('click', () => {
+  if (el.previewVideo.paused) el.previewVideo.play().catch(() => toast('Touchez à nouveau pour lire la vidéo.'));
+  else el.previewVideo.pause();
+});
+$('btnPreviewSound').addEventListener('click', () => {
+  el.previewVideo.muted = !el.previewVideo.muted; state.previewMuted = el.previewVideo.muted;
+  syncPlaybackControls();
+});
+['play', 'pause', 'volumechange'].forEach(event => el.previewVideo.addEventListener(event, syncPlaybackControls));
 
 /* Progression de lecture : remplace les contrôles natifs, qui masquaient
    le filtre sur le tiers bas de l'écran. */
@@ -1666,19 +1799,31 @@ async function burnFilterIntoVideo(blob, filter, onProgress) {
   let audioContext = null;
   let videoEl = null;
   let rafId = null;
+  let outStream = null;
+  let recorder = null;
+  let metadataTimer = null;
+  let watchdog = null;
+  let checkTimer = null;
+  let audioTimer = null;
 
   try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null; // Preserve the original rather than risk losing its audio.
+    audioContext = new AudioCtx();
+    // Resume while still on the synchronous user-gesture stack (Safari).
+    const audioReady = audioContext.state === 'suspended' ? audioContext.resume() : Promise.resolve();
+    audioReady.catch(() => {});
     videoEl = document.createElement('video');
     videoEl.src = url;
     videoEl.playsInline = true;
     videoEl.setAttribute('playsinline', '');
-    videoEl.volume = 0;
+    videoEl.volume = 1; // Routed to MediaStreamDestination only, never to speakers.
     videoEl.preload = 'auto';
 
     await new Promise((resolve, reject) => {
-      videoEl.onloadedmetadata = resolve;
-      videoEl.onerror = () => reject(new Error('Vidéo illisible.'));
-      setTimeout(() => reject(new Error('Délai dépassé.')), 15000);
+      videoEl.onloadedmetadata = () => { clearTimeout(metadataTimer); resolve(); };
+      videoEl.onerror = () => { clearTimeout(metadataTimer); reject(new Error('Vidéo illisible.')); };
+      metadataTimer = setTimeout(() => reject(new Error('Délai dépassé.')), 15000);
     });
 
     const srcW = videoEl.videoWidth || state.mediaWidth || 720;
@@ -1694,21 +1839,18 @@ async function burnFilterIntoVideo(blob, filter, onProgress) {
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
 
-    const outStream = canvas.captureStream(30);
+    outStream = canvas.captureStream(30);
 
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (AudioCtx) {
-        audioContext = new AudioCtx();
-        if (audioContext.state === 'suspended') { try { await audioContext.resume(); } catch (e) {} }
-        const source = audioContext.createMediaElementSource(videoEl);
-        const destination = audioContext.createMediaStreamDestination();
-        source.connect(destination);   /* non relié à ctx.destination : silencieux */
-        destination.stream.getAudioTracks().forEach((t) => outStream.addTrack(t));
-      }
-    } catch (audioErr) {
-      console.warn('[burn] audio non capturé :', audioErr);
-    }
+    await Promise.race([
+      audioReady,
+      new Promise((_, reject) => { audioTimer = setTimeout(() => reject(new Error('Le son ne peut pas être préparé.')), 5000); })
+    ]);
+    clearTimeout(audioTimer);
+    if (audioContext.state !== 'running') throw new Error('Le traitement audio n’est pas disponible.');
+    const audioSource = audioContext.createMediaElementSource(videoEl);
+    const audioDestination = audioContext.createMediaStreamDestination();
+    audioSource.connect(audioDestination);
+    audioDestination.stream.getAudioTracks().forEach(track => outStream.addTrack(track));
 
     const mime = pickVideoMimeType();
     if (mime === null) return null;
@@ -1719,7 +1861,6 @@ async function burnFilterIntoVideo(blob, filter, onProgress) {
     };
     if (mime) options.mimeType = mime;
 
-    let recorder;
     try { recorder = new MediaRecorder(outStream, options); }
     catch (e) { recorder = new MediaRecorder(outStream); }
 
@@ -1730,7 +1871,8 @@ async function burnFilterIntoVideo(blob, filter, onProgress) {
       ? videoEl.duration
       : state.videoDuration || CONFIG.MAX_VIDEO_SECONDS;
 
-    const finished = new Promise((resolve) => { recorder.onstop = resolve; });
+    const finished = new Promise((resolve, reject) => { recorder.onstop = resolve; recorder.onerror = () => reject(new Error('Encodage interrompu.')); });
+    finished.catch(() => {});
 
     const draw = () => {
       if (videoEl.readyState >= 2) {
@@ -1746,13 +1888,13 @@ async function burnFilterIntoVideo(blob, filter, onProgress) {
     draw();
 
     await new Promise((resolve) => {
-      const check = setInterval(() => {
+      checkTimer = setInterval(() => {
         if (videoEl.ended || state.burnCancelled ||
             (videoEl.currentTime || 0) >= totalDuration + 0.5) {
-          clearInterval(check); resolve();
+          clearInterval(checkTimer); resolve();
         }
       }, 200);
-      setTimeout(() => { clearInterval(check); resolve(); },
+      watchdog = setTimeout(() => { state.burnCancelled = true; clearInterval(checkTimer); resolve(); },
         (CONFIG.MAX_VIDEO_SECONDS + 20) * 1000);
     });
 
@@ -1779,6 +1921,9 @@ async function burnFilterIntoVideo(blob, filter, onProgress) {
     console.error('[burn] incrustation vidéo impossible :', err);
     return null;
   } finally {
+    clearTimeout(metadataTimer); clearTimeout(audioTimer); clearTimeout(watchdog); clearInterval(checkTimer);
+    if (recorder && recorder.state !== 'inactive') { try { recorder.stop(); } catch (e) {} }
+    if (outStream) outStream.getTracks().forEach(t => t.stop());
     if (rafId) cancelAnimationFrame(rafId);
     if (videoEl) { try { videoEl.pause(); } catch (e) {} videoEl.removeAttribute('src'); }
     if (audioContext) { try { await audioContext.close(); } catch (e) {} }
@@ -1809,12 +1954,12 @@ function scheduleSpeculativeRender() {
     if (shareFileIsFresh()) return;
     /* On va jusqu'au File, et pas seulement jusqu'au blob : c'est lui qu'il
        faudra passer à navigator.share() sans la moindre attente. */
-    prepareShareFile().catch(() => {});
+    prepareShareFile(true).catch(() => {});
   }, 400);
 }
 
 function finalCacheKey() {
-  return [state.mediaType, currentFilter().id, state.mediaBlob && state.mediaBlob.size].join('|');
+  return [state.mediaId, state.mediaType, currentFilter().id].join('|');
 }
 
 async function buildFinalMedia(silent) {
@@ -1867,6 +2012,7 @@ async function buildFinalMedia(silent) {
     }
   }
 
+  if (key !== finalCacheKey()) throw cancelledError();
   finalCache = { key: key, blob: result.blob, burned: result.filterBurned };
   return result;
 }
@@ -1884,7 +2030,7 @@ async function buildFinalMedia(silent) {
  */
 function setWorking(visible, text, progress, cancellable, indeterminate) {
   el.working.hidden = !visible;
-  state.isBusy = visible;
+  state.isBusy = visible || state.sendPreparing;
   if (text) { el.workingText.textContent = text; announce(text); }
 
   el.workingFill.classList.toggle('is-indeterminate', indeterminate === true);
@@ -1941,7 +2087,8 @@ function shareFileIsFresh() {
 }
 
 function canShareFiles(file) {
-  return !!(navigator.share && navigator.canShare && navigator.canShare({ files: [file] }));
+  try { return !!(navigator.share && navigator.canShare && navigator.canShare({ files: [file] })); }
+  catch (err) { return false; }
 }
 
 /* Appel synchrone : c'est ce qui préserve l'activation utilisateur. */
@@ -1954,10 +2101,10 @@ function shareNow() {
     return true;
   }
 
-  navigator.share({
-    files: [entry.file],
-    title: 'Mon souvenir — Salma & Soufiane'
-  }).then(() => {
+  let sharing;
+  try { sharing = navigator.share({ files: [entry.file], title: 'Mon souvenir — Salma & Soufiane' }); }
+  catch (err) { offerLongPressSave(entry); return true; }
+  Promise.resolve(sharing).then(() => {
     announce('Feuille de partage ouverte.');
   }).catch((err) => {
     if (err && err.name === 'AbortError') return;
@@ -1968,23 +2115,14 @@ function shareNow() {
   return true;
 }
 
-/*
- * Repli sans jamais quitter la page : la photo finale, filtre compris, est
- * affichée telle quelle dans l'aperçu. Un appui long dessus propose alors
- * « Ajouter aux photos » — l'invité reste dans l'application, et l'image
- * atterrit bien dans sa galerie.
- */
+/* Repli de téléchargement quand le partage natif n’est pas disponible. */
 function offerLongPressSave(entry) {
-  if (state.mediaType !== 'photo') {
-    toast("Ce navigateur ne permet pas d'enregistrer la vidéo. Envoyez-la aux " +
-          'mariés : ils vous la renverront.');
-    return;
-  }
-  revokeShareURL();
-  state.shareURL = URL.createObjectURL(entry.file);
-  el.previewImg.src = state.shareURL;
-  el.filterOverlay.hidden = true;   /* le filtre est déjà dans l'image */
-  toast('Appui long sur la photo, puis « Ajouter aux photos ».', 'success');
+  const url = URL.createObjectURL(entry.file);
+  const link = document.createElement('a');
+  link.href = url; link.download = entry.file.name; link.textContent = 'Télécharger le souvenir';
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  toast('Le téléchargement est lancé. Sur iPhone, utilisez Partager puis Enregistrer dans Photos.');
 }
 
 function revokeShareURL() {
@@ -1992,12 +2130,12 @@ function revokeShareURL() {
 }
 
 /* Prépare le fichier en silence, pour que le toucher suivant soit immédiat. */
-async function prepareShareFile() {
+async function prepareShareFile(silent) {
   const key = finalCacheKey();
   if (state.shareFile && state.shareFile.key === key) return state.shareFile;
 
-  const { blob } = await buildFinalMedia();
-  if (!blob || state.cancelled) return null;
+  const { blob } = await buildFinalMedia(silent);
+  if (!blob || state.cancelled || key !== finalCacheKey()) return null;
 
   const name = buildFileName(blob.type);
   state.shareFile = { key: key, file: new File([blob], name, { type: blob.type }) };
@@ -2089,441 +2227,308 @@ function postMedia(url, body) {
    donc écrit sur l'appareil AVANT d'être envoyé, puis supprimé de la file
    seulement une fois la confirmation du serveur reçue. En cas de coupure,
    il repart automatiquement au retour du réseau ou au prochain chargement.
-   Aucun souvenir n'est perdu, et l'invité n'a rien à faire.
+   La réception est confirmée par le serveur ; les éléments non confirmés
+   restent accessibles pour reprise et export explicites.
    ═══════════════════════════════════════════════ */
 
 const DB_NAME = 'livre-souvenirs';
 const DB_STORE = 'file-attente';
-const QUEUE_MAX_ITEMS = 5;
-const QUEUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const LEASE_STORE = 'envoi-verrous';
+const tabOwner = newUploadId();
+const memoryQueue = new Map();
+let queueRunning = false;
+let queueTimer = null;
+let pendingCount = 0;
+let closingPage = false;
 
 function openQueueDb() {
   return new Promise((resolve, reject) => {
-    if (!window.indexedDB) return reject(new Error('IndexedDB indisponible.'));
-    const request = indexedDB.open(DB_NAME, 1);
+    if (!window.indexedDB) return reject(new Error('Stockage local indisponible.'));
+    const request = indexedDB.open(DB_NAME, 2);
+    const timer = setTimeout(() => reject(new Error('Le stockage local ne répond pas.')), 6000);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(DB_STORE)) {
-        db.createObjectStore(DB_STORE, { keyPath: 'uploadId' });
-      }
+      if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE, { keyPath: 'uploadId' });
+      if (!db.objectStoreNames.contains(LEASE_STORE)) db.createObjectStore(LEASE_STORE, { keyPath: 'key' });
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => { clearTimeout(timer); const db = request.result; db.onversionchange = () => db.close(); resolve(db); };
+    request.onerror = () => { clearTimeout(timer); reject(request.error); };
+    request.onblocked = () => { clearTimeout(timer); reject(new Error('Fermez les autres onglets de ce site pour activer le stockage.')); };
   });
 }
 
 function queueTransaction(mode, run) {
-  return openQueueDb().then((db) => new Promise((resolve, reject) => {
-    const tx = db.transaction(DB_STORE, mode);
-    const store = tx.objectStore(DB_STORE);
-    const request = run(store);
-    tx.oncomplete = () => { db.close(); resolve(request ? request.result : undefined); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
+  return openQueueDb().then(db => new Promise((resolve, reject) => {
+    let tx, request;
+    try { tx = db.transaction(DB_STORE, mode); request = run(tx.objectStore(DB_STORE)); }
+    catch (err) { db.close(); reject(err); return; }
+    tx.oncomplete = () => { db.close(); resolve(request?.result); };
+    tx.onerror = tx.onabort = () => { db.close(); reject(tx.error || new Error('Écriture interrompue.')); };
   }));
 }
+const queuePut = item => queueTransaction('readwrite', s => s.put(item));
+const queueDelete = id => queueTransaction('readwrite', s => s.delete(id));
+const queueAll = () => queueTransaction('readonly', s => s.getAll());
+// Never discard an unconfirmed memory, regardless of age or count.
+async function queueTrim() { return refreshPending(); }
 
-const queuePut    = (item) => queueTransaction('readwrite', (s) => s.put(item));
-const queueDelete = (id)   => queueTransaction('readwrite', (s) => s.delete(id));
-const queueAll    = ()     => queueTransaction('readonly',  (s) => s.getAll());
-
-async function queueTrim() {
-  try {
-    const items = (await queueAll()) || [];
-    const now = Date.now();
-    const stale = items.filter((i) => now - (i.createdAt || 0) > QUEUE_MAX_AGE_MS);
-    for (const item of stale) await queueDelete(item.uploadId);
-
-    const fresh = items
-      .filter((i) => stale.indexOf(i) === -1)
-      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    for (const item of fresh.slice(QUEUE_MAX_ITEMS)) await queueDelete(item.uploadId);
-  } catch (err) {
-    console.warn('[file] nettoyage impossible :', err);
-  }
+async function readPending() {
+  let items = [];
+  try { items = await queueAll() || []; } catch (err) {}
+  const merged = new Map(items.map(item => [item.uploadId, item]));
+  for (const [id, item] of memoryQueue) merged.set(id, item);
+  return [...merged.values()].sort((a, b) => a.createdAt - b.createdAt);
 }
 
-/* Une seule interrogation de statut, utilisée avant tout renvoi :
-   si le souvenir est déjà arrivé, on ne le renvoie pas en double. */
-function checkStatusOnce(uploadId, timeoutMs) {
-  return new Promise((resolve) => {
-    const callbackName = 'lpchk' + Math.random().toString(36).slice(2, 10);
-    const script = document.createElement('script');
-    let settled = false;
+async function savePending(item) {
+  if (memoryQueue.has(item.uploadId)) { memoryQueue.set(item.uploadId, item); return; }
+  await queuePut(item);
+}
 
-    const cleanup = () => {
-      try { delete window[callbackName]; } catch (e) { window[callbackName] = undefined; }
-      if (script.parentNode) script.parentNode.removeChild(script);
+// IndexedDB serializes this compare-and-set across tabs, including Safari.
+async function claimUploadLease(release) {
+  const db = await openQueueDb();
+  return new Promise((resolve, reject) => {
+    let acquired = false;
+    const tx = db.transaction(LEASE_STORE, 'readwrite');
+    const store = tx.objectStore(LEASE_STORE);
+    const req = store.get('upload');
+    req.onsuccess = () => {
+      const lease = req.result;
+      if (release) { if (lease?.owner === tabOwner) store.delete('upload'); return; }
+      if (!lease || lease.owner === tabOwner || lease.until < Date.now()) {
+        store.put({ key: 'upload', owner: tabOwner, until: Date.now() + 30000 }); acquired = true;
+      }
     };
-    const finish = (value) => { if (settled) return; settled = true; cleanup(); resolve(value); };
+    tx.oncomplete = () => { db.close(); resolve(acquired); };
+    tx.onerror = tx.onabort = () => { db.close(); reject(tx.error || new Error('Verrou indisponible.')); };
+  });
+}
 
+function checkStatusOnce(uploadId, timeoutMs) {
+  return new Promise(resolve => {
+    const callbackName = 'lpchk' + Math.random().toString(36).slice(2, 12);
+    const script = document.createElement('script');
+    let settled = false, timer;
+    const finish = data => {
+      if (settled) return; settled = true; clearTimeout(timer);
+      delete window[callbackName]; script.remove(); resolve(data);
+    };
     window[callbackName] = finish;
     script.onerror = () => finish(null);
-    script.src = CONFIG.API_URL +
-      '?action=status&uploadId=' + encodeURIComponent(uploadId) +
-      '&prefix=' + callbackName + '&_=' + Date.now();
-
+    script.src = CONFIG.API_URL + '?action=status&uploadId=' + encodeURIComponent(uploadId) + '&prefix=' + callbackName + '&_=' + Date.now();
+    timer = setTimeout(() => finish(null), timeoutMs || 12000);
     document.head.appendChild(script);
-    setTimeout(() => finish(null), timeoutMs || 6000);
   });
 }
 
-function pollUploadStatus(uploadId, onTick) {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-    let stopped = false;
-    let sequence = 0;
-
-    /* stop() rend la main tout de suite : sans cela, « Annuler l'envoi »
-       stopperait les requêtes mais laisserait l'invité devant le spinner. */
-    state.activePoll = {
-      stop(cancelled) {
-        stopped = true;
-        if (cancelled) {
-          const error = new Error('Envoi annulé.');
-          error.cancelled = true;
-          reject(error);
-        }
-      }
-    };
-
-    function request() {
-      if (stopped) return;
-
-      /* Connexion perdue en cours de route : on rend la main immédiatement
-         plutôt que de faire patienter quatre minutes. */
-      if (!navigator.onLine) {
-        stopped = true;
-        const error = new Error('Réseau indisponible.');
-        error.network = true;
-        return reject(error);
-      }
-
-      if (Date.now() - startedAt > CONFIG.UPLOAD_TIMEOUT_MS) {
-        stopped = true;
-        return reject(new Error('TIMEOUT'));
-      }
-
-      const callbackName = 'lpcb' + (++sequence) + Math.random().toString(36).slice(2, 8);
-      const script = document.createElement('script');
-      let settled = false;
-
-      const cleanup = () => {
-        try { delete window[callbackName]; } catch (e) { window[callbackName] = undefined; }
-        if (script.parentNode) script.parentNode.removeChild(script);
-      };
-
-      window[callbackName] = (data) => {
-        if (settled) return;
-        settled = true; cleanup(); handle(data);
-      };
-
-      script.onerror = () => {
-        if (settled) return;
-        settled = true; cleanup();
-        setTimeout(request, CONFIG.UPLOAD_POLL_INTERVAL_MS);
-      };
-
-      script.src = CONFIG.API_URL +
-        '?action=status&uploadId=' + encodeURIComponent(uploadId) +
-        '&prefix=' + encodeURIComponent(callbackName) +
-        '&_=' + Date.now();
-
-      document.head.appendChild(script);
-
-      setTimeout(() => {
-        if (settled) return;
-        settled = true; cleanup(); request();
-      }, CONFIG.UPLOAD_POLL_INTERVAL_MS * 4);
-    }
-
-    function handle(data) {
-      if (onTick) onTick(data);
-      const status = data && data.status;
-      if (status === 'COMPLETED') { stopped = true; return resolve(data); }
-      if (status === 'FAILED') {
-        stopped = true;
-        const error = new Error(data.error || "L'enregistrement a échoué.");
-        error.details = data;
-        return reject(error);
-      }
-      setTimeout(request, CONFIG.UPLOAD_POLL_INTERVAL_MS);
-    }
-
-    request();
-  });
+function cancelledError() { return Object.assign(new Error('Opération annulée.'), { cancelled: true }); }
+function retryError(message, retryAfter) { return Object.assign(new Error(message), { retryAfter: retryAfter || 10 }); }
+function serverResult(data) {
+  if (data?.status === 'COMPLETED') return data;
+  if (data?.status === 'FAILED') throw Object.assign(new Error(data.error || 'Envoi refusé.'), { permanent: !!data.permanent });
+  if (data?.status === 'RETRY' || data?.status === 'BUSY') throw retryError(data.message || 'Les souvenirs arrivent nombreux. Nouvelle tentative dans un instant.', data.retryAfter);
+  return null;
 }
 
-/* Erreurs définitives : inutile de conserver le souvenir dans la file,
-   un renvoi échouerait exactement de la même façon. */
-function isPermanentError(message) {
-  return /taille maximale|limite d'envoi|non pris en charge|non autorisé|durée|vide|Extension/i
-    .test(String(message || ''));
+async function pollUploadStatus(uploadId) {
+  const startedAt = Date.now();
+  while (!closingPage && navigator.onLine && Date.now() - startedAt < CONFIG.UPLOAD_TIMEOUT_MS) {
+    const data = await checkStatusOnce(uploadId, 12000);
+    const result = serverResult(data);
+    if (result) return result;
+    await new Promise(resolve => setTimeout(resolve, CONFIG.UPLOAD_POLL_INTERVAL_MS + Math.random() * 2000));
+  }
+  throw retryError('La réception n’est pas encore confirmée. Le souvenir reste conservé sur cet appareil.', 20);
 }
 
-/* Envoi d'un élément de la file. Résout avec le statut du serveur,
-   rejette si l'envoi n'a pas pu être confirmé. */
 async function attemptSend(item) {
-  /* Le souvenir est-il déjà arrivé lors d'une tentative précédente ?
-     Sans ce contrôle, un renvoi créerait un doublon dans Drive. */
+  if (!navigator.onLine || closingPage) throw retryError('Connexion indisponible.', 10);
   if (item.attempts > 0) {
-    const known = await checkStatusOnce(item.uploadId, 6000);
-    if (known && known.status === 'COMPLETED') return known;
-    if (known && known.status === 'FAILED' && isPermanentError(known.error)) {
-      const error = new Error(known.error);
-      error.permanent = true;
-      throw error;
-    }
+    const known = await checkStatusOnce(item.uploadId, 12000);
+    if (known?.status === 'COMPLETED') return known;
+    if (known?.status === 'FAILED' && known.permanent) serverResult(known);
+    if (known?.status === 'PROCESSING') return pollUploadStatus(item.uploadId);
   }
-
-  const blob = new Blob([item.bytes], { type: item.mimeType });
-  const mediaBase64 = await blobToBase64(blob);
-
-  const payload = JSON.stringify({
-    uploadId: item.uploadId,
-    mediaType: item.mediaType,
-    mimeType: item.mimeType,
-    mediaBase64: mediaBase64,
-    duration: item.duration,
-    guestName: item.guestName,
-    message: item.message,
-    filterId: item.filterId,
-    orientation: item.orientation,
-    filename: item.filename,
-    filterBurned: item.filterBurned
-  });
-
+  // Persist before the POST: a page closing mid-response must check status on retry.
+  item.attempts = (item.attempts || 0) + 1;
+  item.status = 'SENDING';
+  await savePending(item);
+  const mediaBase64 = await blobToBase64(new Blob([item.bytes], { type: item.mimeType }));
+  if (closingPage) throw cancelledError();
+  const payload = JSON.stringify({ ...item, bytes: undefined, mediaBase64 });
   const response = await postMedia(CONFIG.API_URL, payload);
-
   if (response.aborted) throw cancelledError();
-
-  /* Si la requête a échoué ALORS QUE l'appareil est hors ligne, inutile
-     d'interroger le statut pendant des minutes : on abandonne tout de suite
-     et le souvenir reste en file. Quand l'appareil est en ligne, un échec
-     peut n'être qu'un blocage CORS : seule la consultation du statut tranche. */
-  if (!response.ok && !navigator.onLine) {
-    const error = new Error('Réseau indisponible.');
-    error.network = true;
-    throw error;
-  }
-
+  const direct = serverResult(response.data);
+  if (direct) return direct;
   return pollUploadStatus(item.uploadId);
 }
 
-function cancelledError() {
-  const error = new Error('Envoi annulé.');
-  error.cancelled = true;
-  return error;
+function scheduleQueue(delay) {
+  clearTimeout(queueTimer);
+  if (!closingPage) queueTimer = setTimeout(() => processQueue('reprise programmée'), Math.max(1000, delay || 0));
 }
 
-let queueRunning = false;
-
-/* Reprise silencieuse : au chargement, au retour du réseau, ou au retour
-   sur l'onglet. L'invité n'a aucune action à faire. */
 async function processQueue(reason) {
-  if (queueRunning || !navigator.onLine) return;
-
-  let items;
-  try { items = (await queueAll()) || []; }
-  catch (err) { return; }
-  if (!items.length) return;
-
+  if (queueRunning || closingPage) return;
   queueRunning = true;
-  console.info('[file] reprise de', items.length, 'souvenir(s) ·', reason);
-
-  let sent = 0;
-  for (const item of items) {
-    try {
-      item.attempts = (item.attempts || 0) + 1;
-      await queuePut(item);
-
-      await attemptSend(item);
-      await queueDelete(item.uploadId);
-      sent++;
-    } catch (err) {
-      if (err && err.permanent) {
-        await queueDelete(item.uploadId);
-        console.warn('[file] souvenir abandonné (erreur définitive) :', err.message);
-      } else {
-        console.info('[file] renvoi encore impossible, souvenir conservé :',
-                     err && err.message);
-        break;   /* réseau toujours indisponible : inutile d'insister */
+  let lease = false, heartbeat = null, leaseLost = false;
+  try {
+    if (!navigator.onLine) return;
+    let items = await readPending();
+    if (!items.length) return;
+    const persistent = items.some(item => !memoryQueue.has(item.uploadId));
+    if (persistent) {
+      lease = await claimUploadLease(false);
+      if (!lease) { scheduleQueue(8000); return; }
+      heartbeat = setInterval(() => claimUploadLease(false).then(ok => {
+        if (!ok) { leaseLost = true; state.activeXhr?.abort(); }
+      }).catch(() => { leaseLost = true; state.activeXhr?.abort(); }), 8000);
+    }
+    for (const item of items) {
+      if (closingPage || leaseLost || !navigator.onLine) break;
+      if (item.status === 'FAILED') continue;
+      if (item.nextAttemptAt > Date.now()) continue;
+      if (item.uploadId === state.doneUploadId) setDoneStatus('sending', 'Envoi en cours… Gardez cette page ouverte jusqu’à la confirmation.');
+      try {
+        await attemptSend(item);
+        if (memoryQueue.has(item.uploadId)) memoryQueue.delete(item.uploadId);
+        else await queueDelete(item.uploadId);
+        if (item.uploadId === state.doneUploadId) setDoneStatus('sent', 'Votre souvenir est bien arrivé chez les mariés. Merci !');
+        else toast('Un souvenir en attente vient d’être reçu par les mariés.', 'success');
+      } catch (err) {
+        item.status = err.permanent ? 'FAILED' : 'PENDING';
+        item.lastError = err.message;
+        const delay = Math.max((err.retryAfter || 0) * 1000, Math.min(180000, 5000 * 2 ** Math.min(item.attempts || 0, 5))) + Math.random() * 5000;
+        item.nextAttemptAt = Date.now() + delay;
+        try { await savePending(item); } catch (storageError) { memoryQueue.set(item.uploadId, item); }
+        if (item.uploadId === state.doneUploadId) setDoneStatus(err.permanent ? 'failed' : 'pending', err.permanent
+          ? 'Envoi impossible : ' + err.message + ' Vous pouvez toujours enregistrer ce souvenir.'
+          : memoryQueue.has(item.uploadId)
+            ? 'Envoi non confirmé. Gardez cet onglet ouvert et enregistrez une copie sur votre téléphone.'
+            : 'Souvenir conservé sur cet appareil. Gardez ou rouvrez cette page pour terminer l’envoi.');
       }
+      await refreshPending();
     }
-  }
-
-  queueRunning = false;
-
-  if (sent > 0) {
-    toast(sent === 1
-      ? 'Votre souvenir en attente vient d’être envoyé aux mariés.'
-      : sent + ' souvenirs en attente viennent d’être envoyés aux mariés.', 'success');
-  }
-}
-
-/*
- * ENVOI AUX MARIÉS — confirmation immédiate, transfert en arrière-plan.
- *
- * Auparavant, l'invité regardait un spinner pendant toute la durée du
- * transfert : le fichier est encodé en base64 puis remis à Google Apps
- * Script, qui répond lentement. Sur le wifi d'une salle, cela pouvait durer
- * une minute — assez pour qu'on croie l'application plantée.
- *
- * Le souvenir est maintenant écrit sur le téléphone (IndexedDB) puis
- * confirmé tout de suite : l'invité voit « Merci ! » en une fraction de
- * seconde. Le transfert se poursuit seul en arrière-plan, avec reprise
- * automatique en cas de coupure, et l'écran de confirmation affiche
- * honnêtement où il en est.
- */
-el.btnSend.addEventListener('click', async () => {
-  if (!state.mediaBlob || state.isBusy) return;
-  if (state.isSent) { toast('Ce souvenir a déjà été envoyé.'); return; }
-
-  el.btnSend.disabled = true;
-  el.btnSaveShare.disabled = true;
-  state.message = el.captionInput.value.trim();
-  state.cancelled = false;
-
-  const filter = currentFilter();
-
-  try {
-    /* Seule attente conservée : composer le fichier. Instantané pour une
-       photo (déjà préparée), le temps de la vidéo sinon — avec « Annuler ». */
-    const { blob, filterBurned } = await buildFinalMedia();
-
-    if (state.cancelled) {
-      toast('Envoi annulé. Votre souvenir est intact.');
-      return;
-    }
-
-    if (!blob || blob.size === 0) throw new Error('Le fichier est vide.');
-
-    const mime = baseMime(blob.type);
-    const limit = state.mediaType === 'photo'
-      ? CONFIG.CLIENT_MAX_PHOTO_BYTES : CONFIG.CLIENT_MAX_VIDEO_BYTES;
-
-    if (blob.size > limit) {
-      throw new Error(
-        `Ce souvenir pèse ${formatBytes(blob.size)}, au-delà de la limite d'envoi ` +
-        `(${formatBytes(limit)}). Enregistrez-le sur votre téléphone, ou refaites une vidéo plus courte.`
-      );
-    }
-    if (state.mediaType === 'photo' && BACKEND_PHOTO_MIME_ALLOWLIST.indexOf(mime) === -1) {
-      throw new Error('Format de photo non pris en charge (' + mime + ').');
-    }
-    if (state.mediaType === 'video' && BACKEND_VIDEO_MIME_ALLOWLIST.indexOf(mime) === -1) {
-      throw new Error('Format de vidéo non pris en charge (' + mime + ').');
-    }
-    if (state.mediaType === 'video' &&
-        (state.videoDuration <= 0 || state.videoDuration > CONFIG.MAX_VIDEO_SECONDS)) {
-      throw new Error('La durée de la vidéo est invalide (' + state.videoDuration + ' s).');
-    }
-
-    const item = {
-      uploadId: newUploadId(),
-      bytes: await blobToArrayBuffer(blob),
-      size: blob.size,
-      mediaType: state.mediaType,
-      mimeType: mime,
-      duration: state.mediaType === 'video' ? state.videoDuration : 0,
-      guestName: state.guestName,
-      message: state.message,
-      filterId: filter.id,
-      orientation: state.mediaHeight >= state.mediaWidth ? 'portrait' : 'landscape',
-      filename: buildFileName(blob.type),
-      filterBurned: filterBurned,
-      createdAt: Date.now(),
-      attempts: 0
-    };
-
-    console.info('[upload]', {
-      uploadId: item.uploadId, mediaType: item.mediaType, mimeType: item.mimeType,
-      size: blob.size, sizeLabel: formatBytes(blob.size),
-      duration: item.duration, filterId: item.filterId, filterBurned
-    });
-
-    /* Écrit sur l'appareil AVANT toute tentative réseau : à partir d'ici,
-       le souvenir ne peut plus être perdu, même si le wifi lâche. */
-    let queued = false;
-    try { await queuePut(item); queued = true; }
-    catch (err) { console.warn('[file] stockage local indisponible :', err); }
-
-    /* Confirmation immédiate : plus aucune attente pour l'invité. */
-    state.isSent = true;
-    setWorking(false);
-    showScreen('done');
-    announce('Votre souvenir est enregistré. L’envoi se termine tout seul.');
-
-    if (queued) {
-      setDoneStatus('sending', 'Envoi aux mariés en cours… vous pouvez continuer.');
-      deliverInBackground(item);
-    } else {
-      /* Sans stockage local (navigation privée), on ne peut pas différer :
-         l'envoi doit aboutir maintenant, sinon le souvenir serait perdu. */
-      setDoneStatus('sending', 'Envoi aux mariés en cours… restez sur cette page.');
-      deliverInBackground(item, { noQueue: true });
-    }
-
   } catch (err) {
-    setWorking(false);
-
-    if (err && err.cancelled) {
-      toast('Envoi annulé. Votre souvenir est intact.');
-      return;
-    }
-
-    console.error('[upload] échec :', err, err && err.details);
-    const message = err && err.message ? err.message : 'erreur inconnue';
-    toast("L'envoi a échoué : " + message);
-
+    console.warn('[file] reprise différée :', err.message);
   } finally {
-    el.btnSend.disabled = state.isSent;
-    el.btnSaveShare.disabled = false;
-    setWorking(false);
-  }
-});
-
-/*
- * Transfert en arrière-plan. L'invité est déjà sur l'écran de confirmation :
- * on se contente d'y tenir le statut à jour, sans jamais le bloquer.
- */
-async function deliverInBackground(item, options) {
-  const noQueue = !!(options && options.noQueue);
-  try {
-    await attemptSend(item);
-    if (!noQueue) { try { await queueDelete(item.uploadId); } catch (e) {} }
-    setDoneStatus('sent', 'Votre souvenir est bien arrivé chez les mariés.');
-  } catch (err) {
-    console.info('[upload] transfert différé :', err && err.message);
-
-    if (err && err.permanent) {
-      if (!noQueue) { try { await queueDelete(item.uploadId); } catch (e) {} }
-      setDoneStatus('failed', "Ce souvenir n'a pas pu être envoyé : " + err.message);
-      return;
+    clearInterval(heartbeat);
+    if (lease) { try { await claimUploadLease(true); } catch (err) {} }
+    queueRunning = false;
+    const items = await refreshPending();
+    const retryable = items.filter(item => item.status !== 'FAILED');
+    if (retryable.length && navigator.onLine && !closingPage) {
+      scheduleQueue(Math.max(3000, Math.min(...retryable.map(item => (item.nextAttemptAt || 0) - Date.now()))));
     }
-    if (noQueue) {
-      setDoneStatus('failed', "L'envoi a échoué et votre navigateur ne permet pas " +
-                             'de le conserver. Enregistrez le souvenir sur votre téléphone.');
-      return;
-    }
-    setDoneStatus('pending', 'Connexion capricieuse : votre souvenir est gardé sur ce ' +
-                             'téléphone et partira tout seul dès que le réseau revient.');
   }
 }
 
-/* Statut d'envoi affiché sur l'écran de confirmation.
-   Si l'invité est déjà reparti prendre un autre souvenir, une information
-   importante lui est portée par un bandeau plutôt que sur un écran caché. */
+function downloadPending(item) {
+  const file = new File([item.bytes], item.filename, { type: item.mimeType });
+  // Called directly from a user gesture. No preparation before native sharing.
+  if (canShareFiles(file)) navigator.share({ files: [file], title: 'Mon souvenir' }).catch(err => {
+    if (err.name !== 'AbortError') offerLongPressSave({ file });
+  });
+  else offerLongPressSave({ file });
+}
+
+async function retryPending() {
+  const items = await readPending();
+  for (const item of items) {
+    if (item.status === 'FAILED') continue; // A permanent validation error cannot succeed on retry.
+    item.nextAttemptAt = 0;
+    try { await savePending(item); } catch (err) {}
+  }
+  await refreshPending(); processQueue('demande de l’invité');
+}
+
+async function refreshPending() {
+  const items = await readPending(); pendingCount = items.length;
+  const panel = $('queuePanel'), list = $('queueList');
+  if (!panel || !list) return items;
+  $('queueCount').textContent = items.length === 1 ? '1 souvenir en attente' : items.length + ' souvenirs en attente';
+  panel.hidden = !items.length || !(el.screenHome.classList.contains('is-active') || el.screenDone.classList.contains('is-active'));
+  list.replaceChildren();
+  for (const item of items) {
+    const row = document.createElement('li');
+    const label = document.createElement('span');
+    const time = new Date(item.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    label.textContent = (item.mediaType === 'photo' ? 'Photo' : 'Vidéo') + ' de ' + time + (item.status === 'FAILED' ? ' — envoi refusé' : ' — à transmettre');
+    row.appendChild(label);
+    if (item.lastError) { const info = document.createElement('small'); info.textContent = item.lastError; row.appendChild(info); }
+    const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Enregistrer une copie';
+    save.addEventListener('click', () => downloadPending(item)); row.appendChild(save); list.appendChild(row);
+  }
+  $('btnDoneRetry').hidden = !items.some(item => item.uploadId === state.doneUploadId && item.status !== 'FAILED');
+  return items;
+}
+
 function setDoneStatus(kind, text) {
   el.doneStatus.textContent = text;
-  el.doneStatus.className = 'done__status is-' + kind;
-  el.doneStatus.hidden = false;
-
-  if (kind === 'sending') return;
-  if (el.screenDone.classList.contains('is-active')) { announce(text); return; }
-  toast(text, kind === 'sent' ? 'success' : undefined);
+  el.doneStatus.className = 'done__status is-' + kind; el.doneStatus.hidden = false;
+  $('doneTitle').textContent = kind === 'sent' ? 'Souvenir bien reçu' : kind === 'failed' ? 'Votre souvenir est à garder' : 'Votre souvenir se prépare à partir';
+  el.doneText.textContent = kind === 'sent' ? 'Merci pour ce beau moment partagé avec Salma & Soufiane.'
+    : 'La réception par les mariés sera confirmée ici. Vous pouvez aussi garder une copie.';
+  if (el.screenDone.classList.contains('is-active')) announce(text);
 }
 
 window.addEventListener('online', () => processQueue('retour du réseau'));
+window.addEventListener('pageshow', () => { closingPage = false; processQueue('retour sur la page'); });
+window.addEventListener('beforeunload', event => {
+  if (memoryQueue.size || pendingCount) { event.preventDefault(); event.returnValue = ''; }
+});
+$('btnQueueRetry').addEventListener('click', retryPending);
+$('btnDoneRetry').addEventListener('click', retryPending);
+$('btnDoneSave').addEventListener('click', () => {
+  if (state.shareFile && shareFileIsFresh()) shareNow();
+  else if (finalCache.blob) offerLongPressSave({ file: new File([finalCache.blob], buildFileName(finalCache.blob.type), { type: finalCache.blob.type }) });
+});
+
+el.btnSend.addEventListener('click', async () => {
+  if (!state.mediaBlob || state.isBusy || state.isSent) return;
+  // Lock preparation before the first await, including filter-free photos.
+  state.sendPreparing = true; state.isBusy = true; state.cancelled = false;
+  el.btnSend.disabled = true; el.btnSaveShare.disabled = true;
+  state.message = el.captionInput.value.trim();
+  const filter = currentFilter();
+  try {
+    const { blob, filterBurned } = await buildFinalMedia();
+    if (state.cancelled) throw cancelledError();
+    if (!blob?.size) throw new Error('Le fichier est vide.');
+    const mime = baseMime(blob.type);
+    const limit = state.mediaType === 'photo' ? CONFIG.CLIENT_MAX_PHOTO_BYTES : CONFIG.CLIENT_MAX_VIDEO_BYTES;
+    if (blob.size > limit) throw new Error('Fichier trop volumineux (' + formatBytes(blob.size) + '). Enregistrez une copie ou choisissez une vidéo plus courte.');
+    const allowed = state.mediaType === 'photo' ? BACKEND_PHOTO_MIME_ALLOWLIST : BACKEND_VIDEO_MIME_ALLOWLIST;
+    if (!allowed.includes(mime)) throw new Error('Ce format de fichier ne peut pas être envoyé.');
+    if (state.mediaType === 'video' && (!Number.isFinite(state.videoDuration) || state.videoDuration <= 0 || state.videoDuration > CONFIG.MAX_VIDEO_SECONDS)) throw new Error('La durée maximale est de 60 secondes.');
+    const pending = await readPending();
+    if (pending.reduce((total, item) => total + (item.size || item.bytes?.byteLength || 0), 0) + blob.size > 32 * 1024 * 1024) {
+      throw new Error('Cet appareil conserve déjà plusieurs souvenirs. Terminez les envois en attente ou enregistrez une copie avant d’ajouter ce fichier.');
+    }
+    const item = {
+      uploadId: newUploadId(), bytes: await blobToArrayBuffer(blob), size: blob.size,
+      mediaType: state.mediaType, mimeType: mime, duration: state.videoDuration,
+      guestName: state.guestName, message: state.message, filterId: filter.id,
+      orientation: state.mediaHeight >= state.mediaWidth ? 'portrait' : 'landscape',
+      filename: buildFileName(mime), filterBurned, createdAt: Date.now(), attempts: 0,
+      status: 'PENDING', nextAttemptAt: Date.now() + 500 + Math.random() * 4500
+    };
+    try { await queuePut(item); }
+    catch (err) { memoryQueue.set(item.uploadId, item); }
+    state.isSent = true; state.doneUploadId = item.uploadId;
+    setWorking(false); showScreen('done');
+    setDoneStatus('pending', memoryQueue.has(item.uploadId)
+      ? 'Gardez cet onglet ouvert : le stockage de votre navigateur est indisponible. Enregistrez une copie.'
+      : navigator.onLine ? 'Souvenir conservé sur cet appareil. L’envoi va commencer ; gardez cette page ouverte.'
+        : 'Vous êtes hors ligne. Le souvenir reste sur cet appareil ; rouvrez cette page avec une connexion.');
+    await refreshPending(); scheduleQueue(item.nextAttemptAt - Date.now());
+  } catch (err) {
+    toast(err.cancelled ? 'Annulé. Votre souvenir est intact.' : err.message);
+  } finally {
+    state.sendPreparing = false; setWorking(false); el.btnSend.disabled = state.isSent; el.btnSaveShare.disabled = false;
+  }
+});
 
 
 /* ───────────────────────── ACCUEIL & CYCLE DE VIE ───────────────────────── */
@@ -2544,6 +2549,11 @@ function recallGuestName() {
   catch (e) { return ''; }
 }
 
+$('btnHomeGallery').addEventListener('click', () => {
+  state.guestName = el.nameInput.value.trim(); rememberGuestName(state.guestName); openGallery();
+});
+$('btnBlockerBack').addEventListener('click', () => { stopAllStreams(); showScreen('home'); });
+$('nameInput').addEventListener('keydown', event => { if (event.key === 'Enter') el.btnStart.click(); });
 el.btnStart.addEventListener('click', async () => {
   state.guestName = el.nameInput.value.trim();
   rememberGuestName(state.guestName);
@@ -2553,6 +2563,7 @@ el.btnStart.addEventListener('click', async () => {
 });
 
 el.btnCaptureBack.addEventListener('click', () => {
+  state.discardRecording = true;
   if (state.isRecording) stopRecording();
   stopAllStreams();
   showScreen('home');
@@ -2581,7 +2592,8 @@ function resetMedia() {
   el.filterOverlay.hidden = true;
   el.filterOverlay.getContext('2d')
     .clearRect(0, 0, el.filterOverlay.width, el.filterOverlay.height);
-  el.captionInput.value = state.message;
+  state.message = '';
+  el.captionInput.value = '';
   state.mediaBlob = null;
   state.mediaType = null;
   state.videoDuration = 0;
@@ -2593,8 +2605,9 @@ function resetMedia() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
-    if (state.isRecording) stopRecording();
-    if (el.screenCapture.classList.contains('is-active')) stopAllStreams();
+    if (state.isRecording) {
+      stopRecording(); // onstop owns cleanup and preserves the partial video.
+    } else if (el.screenCapture.classList.contains('is-active')) stopAllStreams();
   } else {
     if (el.screenCapture.classList.contains('is-active') && !state.videoStream) startCamera();
     processQueue('retour sur la page');
@@ -2602,12 +2615,14 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('pagehide', () => {
+  closingPage = true; clearTimeout(queueTimer);
+  state.discardRecording = true;
+  if (state.isRecording) stopRecording();
   stopAllStreams();
   releaseWakeLock();
   clearTimeout(speculativeTimer);
   clearInterval(state.recordTimerId);
-  revokePreviewURL();
-  revokeShareURL();
+  // Blob URLs are retained for bfcache restoration; the page owns their lifetime.
   if (state.activePoll) state.activePoll.stop();
   if (state.activeXhr) { try { state.activeXhr.abort(); } catch (e) {} }
 });
@@ -2634,5 +2649,5 @@ window.addEventListener('unhandledrejection', (e) => console.error('[promise]', 
   console.info('[app] prêt · filtres chargés :', state.filters.length);
 
   /* Souvenirs restés en file lors d'une précédente visite. */
-  queueTrim().then(() => processQueue('chargement de la page'));
+  refreshPending().then(() => scheduleQueue(1500 + Math.random() * 4000));
 })();
