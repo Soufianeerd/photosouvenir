@@ -127,6 +127,7 @@ test('leaving capture cancels an image import before it can reopen preview', asy
   const f = frontend(); f.run("showScreen('capture');var releaseImage;loadImage=()=>new Promise(r=>releaseImage=r);canvasToBlob=async()=>new Blob(['jpeg'],{type:'image/jpeg'})");
   f.elements.get('galleryInput').files=[new File(['image'],'test.png',{type:'image/png'})];
   const loading=f.elements.get('galleryInput').listeners.change[0]();
+  while (!f.run('releaseImage')) await new Promise(resolve => setImmediate(resolve));
   f.elements.get('btnCaptureBack').listeners.click[0]();
   f.run('releaseImage({naturalWidth:1200,naturalHeight:800})'); await loading;
   assert.equal(f.run("el.screenHome.classList.contains('is-active')"),true);

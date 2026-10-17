@@ -79,7 +79,7 @@ const state = {
   mediaId: 0, importSession: 0, cameraSession: 0, audioGeneration: 0, cameraChanging: false,
   cameraReady: false, recordStarting: false, recordStopping: false, recordRequestId: 0,
   discardRecording: false, recordDimensions: null, screenFlashOn: false,
-  doneUploadId: null,
+  doneUploadId: null, doneBatchIds: [], editingDraftId: null,
 
   message: '',
 
@@ -1473,66 +1473,63 @@ function openGallery() {
 el.btnGallery.addEventListener('click', openGallery);
 el.btnBlockerGallery.addEventListener('click', openGallery);
 
-el.galleryInput.addEventListener('change', async () => {
-  const file = el.galleryInput.files && el.galleryInput.files[0];
-  el.galleryInput.value = '';
-  if (!file) return;
-
-  const isVideo = file.type.indexOf('video/') === 0;
-  const isPhoto = file.type.indexOf('image/') === 0;
-  if (!isVideo && !isPhoto) { toast('Format de fichier non pris en charge.'); return; }
-  if (state.isBusy) return;
-  if (file.size > (isVideo ? CONFIG.CLIENT_MAX_VIDEO_BYTES : 32 * 1024 * 1024)) {
-    toast('Ce fichier est trop volumineux. Choisissez un fichier plus léger ou une vidéo plus courte.'); return;
+async function normalizeGalleryFile(file) {
+  const isVideo = file.type.startsWith('video/'), isPhoto = file.type.startsWith('image/');
+  if (!isVideo && !isPhoto) throw new Error('Format non pris en charge. Choisissez une photo ou une vidéo.');
+  if (!file.size || file.size > (isVideo ? CONFIG.CLIENT_MAX_VIDEO_BYTES : 32 * 1024 * 1024)) throw new Error('Fichier vide ou trop volumineux. Choisissez un fichier plus léger.');
+  if (isVideo) {
+    if (!BACKEND_VIDEO_MIME_ALLOWLIST.includes(baseMime(file.type))) throw new Error('Formats vidéo acceptés : MP4, WebM et MOV.');
+    const meta = await readVideoMetadata(file);
+    if (meta.duration > CONFIG.MAX_VIDEO_SECONDS) throw new Error('Cette vidéo dépasse la durée maximale de 60 secondes.');
+    return { blob: file, mediaType: 'video', width: meta.width, height: meta.height, duration: meta.duration };
   }
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(url);
+    let w = img.naturalWidth, h = img.naturalHeight;
+    if (!w || !h) throw new Error('Image illisible.');
+    const ratio = Math.min(1, CONFIG.PHOTO_MAX_LONG_EDGE / Math.max(w, h));
+    w = Math.round(w * ratio); h = Math.round(h * ratio);
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d'); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, 0, 0, w, h);
+    return { blob: await canvasToBlob(canvas, 'image/jpeg', CONFIG.JPEG_QUALITY), mediaType: 'photo', width: w, height: h, duration: 0 };
+  } catch (error) { throw new Error('Cette image ne peut pas être lue. Choisissez une photo JPEG ou PNG.'); }
+  finally { URL.revokeObjectURL(url); }
+}
+
+el.galleryInput.addEventListener('change', async () => {
+  const files = Array.from(el.galleryInput.files || []); el.galleryInput.value = '';
+  if (!files.length || state.isBusy || selectionBusy) return;
   const importId = ++state.importSession;
   const fromCapture = el.screenCapture.classList.contains('is-active');
-  stopAllStreams();
-  state.isBusy = true;
-  el.btnStart.disabled = true; $('btnHomeGallery').disabled = true;
-  let imported = false;
-  let imageURL = null;
+  stopAllStreams(); state.isBusy = true; setHomeBusy(true);
+  let imported = 0, rejected = [], openedPreview = false;
   try {
-    if (isPhoto) {
-      imageURL = URL.createObjectURL(file);
-      const img = await loadImage(imageURL);
-
-      let w = img.naturalWidth, h = img.naturalHeight;
-      const longEdge = Math.max(w, h);
-      if (longEdge > CONFIG.PHOTO_MAX_LONG_EDGE) {
-        const k = CONFIG.PHOTO_MAX_LONG_EDGE / longEdge;
-        w = Math.round(w * k); h = Math.round(h * k);
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(img, 0, 0, w, h);
-      const blob = await canvasToBlob(canvas, 'image/jpeg', CONFIG.JPEG_QUALITY);
-      if (importId !== state.importSession) return;
-      setCapturedMedia(blob, 'photo', w, h, 0);
-    } else {
-      const meta = await readVideoMetadata(file);
-      if (meta.duration > CONFIG.MAX_VIDEO_SECONDS) {
-        toast(`Cette vidéo dure ${Math.round(meta.duration)} s. La durée maximale est de 60 secondes.`);
-        return;
-      }
-      if (BACKEND_VIDEO_MIME_ALLOWLIST.indexOf(baseMime(file.type)) === -1) {
-        toast("Ce format vidéo n'est pas accepté. Formats acceptés : MP4, WebM, MOV.");
-        return;
-      }
-      if (importId !== state.importSession) return;
-      setCapturedMedia(file, 'video', meta.width, meta.height, meta.duration || 1);
+    const available = MAX_SELECTION - (await readDrafts()).length;
+    if (available <= 0) throw new Error('Votre sélection contient déjà 20 souvenirs. Envoyez-la ou retirez un fichier.');
+    for (const file of files.slice(0, available)) {
+      if (importId !== state.importSession) break;
+      $('draftStatus').textContent = `Préparation ${imported + rejected.length + 1} / ${Math.min(files.length, available)}…`;
+      try {
+        const media = await normalizeGalleryFile(file);
+        if (importId !== state.importSession) break;
+        if (files.length === 1) {
+          setCapturedMedia(media.blob, media.mediaType, media.width, media.height, media.duration);
+          state.message = ''; goToPreview(); openedPreview = true;
+        } else {
+          await storeDraft(await makeDraft(media.blob, media.mediaType, media.width, media.height, media.duration));
+        }
+        imported++;
+      } catch (err) { rejected.push(file.name + ' : ' + err.message); }
     }
-    imported = true;
-    goToPreview();
-  } catch (err) {
-    console.error('[galerie]', err);
-    if (importId === state.importSession) toast(isVideo && err.message ? err.message : 'Cette image ne peut pas être lue. Choisissez une photo JPEG ou PNG.');
-  } finally {
-    if (imageURL) URL.revokeObjectURL(imageURL);
+    if (files.length > available) rejected.push(`La sélection est limitée à ${MAX_SELECTION} souvenirs.`);
+    if (importId === state.importSession && !openedPreview && imported) showScreen('home');
+  } catch (err) { rejected.push(err.message); }
+  finally {
     if (importId === state.importSession) {
-      state.isBusy = false; el.btnStart.disabled = false; $('btnHomeGallery').disabled = false;
+      state.isBusy = false; setHomeBusy(false); await refreshDrafts();
+      if (rejected.length) toast(`${imported ? imported + ' souvenir(s) ajouté(s). ' : ''}${rejected[0]}${rejected.length > 1 ? ' (' + rejected.length + ' fichiers ou limites à vérifier)' : ''}`);
+      else if (imported && !openedPreview) announce(`${imported} souvenirs ajoutés à votre sélection.`);
       if (!imported && fromCapture && el.screenCapture.classList.contains('is-active')) startCamera();
     }
   }
@@ -1566,6 +1563,7 @@ function readVideoMetadata(file) {
 
 function setCapturedMedia(blob, type, width, height, duration) {
   if (!blob || !blob.size) throw new Error('Média vide.');
+  state.editingDraftId = null;
   state.mediaId++;
   clearTimeout(speculativeTimer);
   finalCache = { key: null, blob: null, burned: false };
@@ -1595,7 +1593,7 @@ function fitMediaBox() {
 }
 window.addEventListener('resize', fitMediaBox);
 
-function goToPreview() {
+function goToPreview(filterId = 'none') {
   state.isBusy = false;
   stopAllStreams();
   state.recordRequestId++;
@@ -1627,6 +1625,7 @@ function goToPreview() {
 
   el.captionInput.value = state.message;
   el.btnSend.disabled = false;
+  $('previewSelectionLabel').textContent = state.editingDraftId ? 'Valider les modifications' : 'Ajouter à ma sélection';
   el.btnSaveShare.disabled = false;
   updateSaveButton();
 
@@ -1637,7 +1636,7 @@ function goToPreview() {
   showScreen('preview');
   syncPlaybackControls();
   fitMediaBox();
-  selectFilter(0, false);
+  selectFilter(Math.max(0, state.filters.findIndex(filter => filter.id === filterId)), false);
   announce('Aperçu de votre souvenir. Faites glisser pour découvrir les filtres.');
 }
 
@@ -1744,11 +1743,9 @@ el.btnRetake.addEventListener('click', () => {
   revokePreviewURL();
   el.previewImg.removeAttribute('src');
   el.previewVideo.removeAttribute('src');
-  state.mediaBlob = null;
-  state.mediaType = null;
-  el.videoFilterNotice.hidden = true;
-  showScreen('capture');
-  startCamera();
+  resetMedia();
+  showScreen('home');
+  refreshDrafts();
 });
 
 
@@ -2256,8 +2253,15 @@ function postMedia(url, body) {
 const DB_NAME = 'livre-souvenirs';
 const DB_STORE = 'file-attente';
 const LEASE_STORE = 'envoi-verrous';
+const DRAFT_STORE = 'selection';
+const MAX_SELECTION = 20;
+const LOCAL_BYTE_BUDGET = 32 * 1024 * 1024;
+const memoryDrafts = new Map();
+let draftCount = 0, selectionBusy = false, draftRenderId = 0;
+let draftURLs = [];
 const tabOwner = newUploadId();
 const memoryQueue = new Map();
+const receivedUploads = new Set();
 let queueRunning = false;
 let queueTimer = null;
 let pendingCount = 0;
@@ -2266,11 +2270,12 @@ let closingPage = false;
 function openQueueDb() {
   return new Promise((resolve, reject) => {
     if (!window.indexedDB) return reject(new Error('Stockage local indisponible.'));
-    const request = indexedDB.open(DB_NAME, 2);
+    const request = indexedDB.open(DB_NAME, 3);
     const timer = setTimeout(() => reject(new Error('Le stockage local ne répond pas.')), 6000);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE, { keyPath: 'uploadId' });
+      if (!db.objectStoreNames.contains(DRAFT_STORE)) db.createObjectStore(DRAFT_STORE, { keyPath: 'uploadId' });
       if (!db.objectStoreNames.contains(LEASE_STORE)) db.createObjectStore(LEASE_STORE, { keyPath: 'key' });
     };
     request.onsuccess = () => { clearTimeout(timer); const db = request.result; db.onversionchange = () => db.close(); resolve(db); };
@@ -2279,10 +2284,10 @@ function openQueueDb() {
   });
 }
 
-function queueTransaction(mode, run) {
+function queueTransaction(mode, run, store = DB_STORE) {
   return openQueueDb().then(db => new Promise((resolve, reject) => {
     let tx, request;
-    try { tx = db.transaction(DB_STORE, mode); request = run(tx.objectStore(DB_STORE)); }
+    try { tx = db.transaction(store, mode); request = run(tx.objectStore(store)); }
     catch (err) { db.close(); reject(err); return; }
     tx.oncomplete = () => { db.close(); resolve(request?.result); };
     tx.onerror = tx.onabort = () => { db.close(); reject(tx.error || new Error('Écriture interrompue.')); };
@@ -2291,6 +2296,27 @@ function queueTransaction(mode, run) {
 const queuePut = item => queueTransaction('readwrite', s => s.put(item));
 const queueDelete = id => queueTransaction('readwrite', s => s.delete(id));
 const queueAll = () => queueTransaction('readonly', s => s.getAll());
+async function completePending(item) {
+  receivedUploads.add(item.uploadId); // Called only after an actual COMPLETED receipt.
+  if (memoryQueue.has(item.uploadId)) { memoryQueue.delete(item.uploadId); return; }
+  const db = await openQueueDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction([DB_STORE, LEASE_STORE], 'readwrite');
+    tx.objectStore(LEASE_STORE).put({ key: 'received:' + item.uploadId, receivedAt: Date.now() });
+    tx.objectStore(DB_STORE).delete(item.uploadId);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = tx.onabort = () => { db.close(); reject(tx.error || new Error('Réception confirmée, nettoyage local différé.')); };
+  });
+}
+async function readReceived(ids) {
+  try {
+    const receipts = await queueTransaction('readonly', store => store.getAll(), LEASE_STORE);
+    for (const receipt of receipts || []) {
+      if (receipt.key.startsWith('received:') && ids.includes(receipt.key.slice(9))) receivedUploads.add(receipt.key.slice(9));
+    }
+  } catch (err) { /* Absence de lecture ne constitue jamais une preuve de réception. */ }
+  return ids.filter(id => receivedUploads.has(id));
+}
 // Never discard an unconfirmed memory, regardless of age or count.
 async function queueTrim() { return refreshPending(); }
 
@@ -2414,10 +2440,9 @@ async function processQueue(reason) {
       if (item.uploadId === state.doneUploadId) setDoneStatus('sending', 'Envoi en cours… Gardez cette page ouverte jusqu’à la confirmation.');
       try {
         await attemptSend(item);
-        if (memoryQueue.has(item.uploadId)) memoryQueue.delete(item.uploadId);
-        else await queueDelete(item.uploadId);
+        await completePending(item);
         if (item.uploadId === state.doneUploadId) setDoneStatus('sent', 'Votre souvenir est bien arrivé chez les mariés. Merci !');
-        else toast('Un souvenir en attente vient d’être reçu par les mariés.', 'success');
+        else if (!state.doneBatchIds.includes(item.uploadId)) toast('Un souvenir en attente vient d’être reçu par les mariés.', 'success');
       } catch (err) {
         item.status = err.permanent ? 'FAILED' : 'PENDING';
         item.lastError = err.message;
@@ -2482,7 +2507,21 @@ async function refreshPending() {
     const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Enregistrer une copie';
     save.addEventListener('click', () => downloadPending(item)); row.appendChild(save); list.appendChild(row);
   }
-  $('btnDoneRetry').hidden = !items.some(item => item.uploadId === state.doneUploadId && item.status !== 'FAILED');
+  const batch = state.doneBatchIds;
+  if (batch.length) {
+    const confirmed = await readReceived(batch);
+    const received = confirmed.length;
+    const outstanding = batch.filter(id => !confirmed.includes(id));
+    const remaining = outstanding.map(id => items.find(item => item.uploadId === id) || { uploadId: id, status: 'PENDING' });
+    const failed = remaining.some(item => item.status === 'FAILED');
+    $('doneTitle').textContent = !remaining.length ? 'Souvenirs bien reçus' : failed ? 'Certains souvenirs restent à garder' : 'Vos souvenirs sont en route';
+    el.doneText.textContent = `${received} / ${batch.length} souvenir${batch.length > 1 ? 's' : ''} reçu${batch.length > 1 ? 's' : ''} par les mariés.`;
+    el.doneStatus.hidden = false;
+    el.doneStatus.className = 'done__status is-' + (!remaining.length ? 'sent' : failed ? 'failed' : 'pending');
+    el.doneStatus.textContent = !remaining.length ? 'Merci ! Toute votre sélection est arrivée dans notre album privé.' : memoryQueue.size ? 'Gardez cet onglet ouvert et enregistrez une copie : le stockage du navigateur est indisponible.' : navigator.onLine ? 'Gardez cette page ouverte. Chaque réception sera confirmée ici.' : 'Vous êtes hors ligne. Rouvrez cette page avec une connexion pour terminer les envois.';
+    $('btnDoneSave').hidden = true;
+  } else $('btnDoneSave').hidden = false;
+  $('btnDoneRetry').hidden = !items.some(item => (item.uploadId === state.doneUploadId || batch.includes(item.uploadId)) && item.status !== 'FAILED');
   return items;
 }
 
@@ -2498,7 +2537,7 @@ function setDoneStatus(kind, text) {
 window.addEventListener('online', () => processQueue('retour du réseau'));
 window.addEventListener('pageshow', () => { closingPage = false; processQueue('retour sur la page'); });
 window.addEventListener('beforeunload', event => {
-  if (memoryQueue.size || pendingCount) { event.preventDefault(); event.returnValue = ''; }
+  if (memoryQueue.size || pendingCount || memoryDrafts.size || draftCount) { event.preventDefault(); event.returnValue = ''; }
 });
 $('btnQueueRetry').addEventListener('click', retryPending);
 $('btnDoneRetry').addEventListener('click', retryPending);
@@ -2509,48 +2548,188 @@ $('btnDoneSave').addEventListener('click', () => {
 
 el.btnSend.addEventListener('click', async () => {
   if (!state.mediaBlob || state.isBusy || state.isSent) return;
-  // Lock preparation before the first await, including filter-free photos.
   state.sendPreparing = true; state.isBusy = true; state.cancelled = false;
   el.btnSend.disabled = true; el.btnSaveShare.disabled = true;
   state.message = el.captionInput.value.trim();
-  const filter = currentFilter();
+  const filter = currentFilter(), replacingId = state.editingDraftId;
   try {
     const { blob, filterBurned } = await buildFinalMedia();
     if (state.cancelled) throw cancelledError();
-    if (!blob?.size) throw new Error('Le fichier est vide.');
-    const mime = baseMime(blob.type);
-    const limit = state.mediaType === 'photo' ? CONFIG.CLIENT_MAX_PHOTO_BYTES : CONFIG.CLIENT_MAX_VIDEO_BYTES;
-    if (blob.size > limit) throw new Error('Fichier trop volumineux (' + formatBytes(blob.size) + '). Enregistrez une copie ou choisissez une vidéo plus courte.');
-    const allowed = state.mediaType === 'photo' ? BACKEND_PHOTO_MIME_ALLOWLIST : BACKEND_VIDEO_MIME_ALLOWLIST;
-    if (!allowed.includes(mime)) throw new Error('Ce format de fichier ne peut pas être envoyé.');
-    if (state.mediaType === 'video' && (!Number.isFinite(state.videoDuration) || state.videoDuration <= 0 || state.videoDuration > CONFIG.MAX_VIDEO_SECONDS)) throw new Error('La durée maximale est de 60 secondes.');
-    const pending = await readPending();
-    if (pending.reduce((total, item) => total + (item.size || item.bytes?.byteLength || 0), 0) + blob.size > 32 * 1024 * 1024) {
-      throw new Error('Cet appareil conserve déjà plusieurs souvenirs. Terminez les envois en attente ou enregistrez une copie avant d’ajouter ce fichier.');
+    const item = await makeDraft(blob, state.mediaType, state.mediaWidth, state.mediaHeight, state.videoDuration, {
+      uploadId: replacingId || newUploadId(), message: state.message, filterId: filter.id, filterBurned
+    });
+    if (filterBurned) {
+      item.originalBytes = await blobToArrayBuffer(state.mediaBlob);
+      item.originalMimeType = state.mediaBlob.type;
     }
-    const item = {
-      uploadId: newUploadId(), bytes: await blobToArrayBuffer(blob), size: blob.size,
-      mediaType: state.mediaType, mimeType: mime, duration: state.videoDuration,
-      guestName: state.guestName, message: state.message, filterId: filter.id,
-      orientation: state.mediaHeight >= state.mediaWidth ? 'portrait' : 'landscape',
-      filename: buildFileName(mime), filterBurned, createdAt: Date.now(), attempts: 0,
-      status: 'PENDING', nextAttemptAt: Date.now() + 500 + Math.random() * 12000
-    };
-    try { await queuePut(item); }
-    catch (err) { memoryQueue.set(item.uploadId, item); }
-    state.isSent = true; state.doneUploadId = item.uploadId;
-    setWorking(false); showScreen('done');
-    setDoneStatus('pending', memoryQueue.has(item.uploadId)
-      ? 'Gardez cet onglet ouvert : le stockage de votre navigateur est indisponible. Enregistrez une copie.'
-      : navigator.onLine ? 'Souvenir conservé sur cet appareil. L’envoi va commencer ; gardez cette page ouverte.'
-        : 'Vous êtes hors ligne. Le souvenir reste sur cet appareil ; rouvrez cette page avec une connexion.');
-    await refreshPending(); scheduleQueue(item.nextAttemptAt - Date.now());
-  } catch (err) {
-    toast(err.cancelled ? 'Annulé. Votre souvenir est intact.' : err.message);
-  } finally {
-    state.sendPreparing = false; setWorking(false); el.btnSend.disabled = state.isSent; el.btnSaveShare.disabled = false;
-  }
+    item.storageSize = item.size + (item.originalBytes?.byteLength || 0);
+    await storeDraft(item, !!replacingId);
+    resetMedia(); setWorking(false); showScreen('home'); await refreshDrafts();
+    toast(replacingId ? 'Souvenir mis à jour.' : 'Souvenir ajouté. Vous pouvez en ajouter un autre ou envoyer votre sélection.', 'success');
+  } catch (err) { toast(err.cancelled ? 'Annulé. Votre souvenir est intact.' : err.message); }
+  finally { state.sendPreparing = false; setWorking(false); el.btnSend.disabled = false; el.btnSaveShare.disabled = false; setHomeBusy(false); }
 });
+
+/* Sélection persistante, distincte de la file d'envoi : aucun envoi implicite. */
+function setHomeBusy(busy) {
+  for (const id of ['btnStart', 'btnHomeVideo', 'btnHomeGallery', 'btnClearDrafts']) $(id).disabled = busy;
+  $('btnSendSelection').disabled = busy || !draftCount;
+  $('draftList').setAttribute('aria-busy', String(busy));
+}
+async function readDrafts() {
+  let saved = [];
+  try { saved = await queueTransaction('readonly', store => store.getAll(), DRAFT_STORE) || []; } catch (err) {}
+  const all = new Map(saved.map(item => [item.uploadId, item]));
+  for (const [id, item] of memoryDrafts) all.set(id, item);
+  return [...all.values()].sort((a, b) => a.createdAt - b.createdAt);
+}
+async function makeDraft(blob, mediaType, width, height, duration, extra = {}) {
+  const mime = baseMime(blob?.type), video = mediaType === 'video';
+  if (!blob?.size) throw new Error('Le fichier est vide.');
+  if (blob.size > (video ? CONFIG.CLIENT_MAX_VIDEO_BYTES : CONFIG.CLIENT_MAX_PHOTO_BYTES)) throw new Error('Fichier trop volumineux (' + formatBytes(blob.size) + ').');
+  if (!(video ? BACKEND_VIDEO_MIME_ALLOWLIST : BACKEND_PHOTO_MIME_ALLOWLIST).includes(mime)) throw new Error('Ce format ne peut pas être envoyé.');
+  if (video && (!Number.isFinite(duration) || duration <= 0 || duration > CONFIG.MAX_VIDEO_SECONDS)) throw new Error('La durée maximale est de 60 secondes.');
+  return { uploadId: newUploadId(), bytes: await blobToArrayBuffer(blob), size: blob.size, mediaType, mimeType: mime,
+    duration, width, height, filename: buildFileName(mime), message: '', filterId: 'none', filterBurned: false,
+    orientation: height >= width ? 'portrait' : 'landscape', createdAt: Date.now(), ...extra };
+}
+function validateDraftBudget(drafts, pending, item) {
+  const others = drafts.filter(draft => draft.uploadId !== item.uploadId);
+  if (others.length >= MAX_SELECTION) throw new Error('Votre sélection contient déjà 20 souvenirs. Envoyez-la ou retirez un fichier.');
+  const bytes = [...others, ...pending].reduce((sum, draft) => sum + (draft.storageSize || draft.size || draft.bytes?.byteLength || 0), 0);
+  if (bytes + (item.storageSize || item.size) > LOCAL_BYTE_BUDGET) throw new Error('La limite de 32 Mo sur cet appareil est atteinte. Envoyez votre sélection et attendez la réception avant d’ajouter ce fichier.');
+}
+async function storeDraft(item, replacing = false) {
+  const existing = await readDrafts();
+  if (replacing && !existing.some(draft => draft.uploadId === item.uploadId)) throw new Error('Ce souvenir a déjà été retiré ou envoyé depuis un autre onglet.');
+  validateDraftBudget(existing, await readPending(), item);
+  let db;
+  try { db = await openQueueDb(); } catch (err) { memoryDrafts.set(item.uploadId, item); return; }
+  // The budget check and write share a transaction, including across tabs.
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction([DRAFT_STORE, DB_STORE], 'readwrite');
+    const drafts = tx.objectStore(DRAFT_STORE).getAll(), pending = tx.objectStore(DB_STORE).getAll();
+    let validationError;
+    pending.onsuccess = () => {
+      try {
+        if (replacing && !drafts.result.some(draft => draft.uploadId === item.uploadId) && !memoryDrafts.has(item.uploadId)) throw new Error('Ce souvenir a déjà été retiré ou envoyé depuis un autre onglet.');
+        validateDraftBudget([...drafts.result, ...memoryDrafts.values()], [...pending.result, ...memoryQueue.values()], item);
+        tx.objectStore(DRAFT_STORE).put(item);
+      } catch (err) { validationError = err; tx.abort(); }
+    };
+    tx.oncomplete = () => { db.close(); memoryDrafts.delete(item.uploadId); resolve(); };
+    tx.onerror = tx.onabort = () => {
+      db.close();
+      if (validationError) reject(validationError);
+      else if (replacing && !memoryDrafts.has(item.uploadId)) reject(new Error('Le stockage est plein ou indisponible. Votre sélection reste intacte ; gardez une copie de cette modification.'));
+      else { memoryDrafts.set(item.uploadId, item); resolve(); }
+    };
+  });
+}
+async function removeDraft(id) {
+  if (memoryDrafts.has(id)) {
+    try { await queueTransaction('readwrite', store => store.delete(id), DRAFT_STORE); } catch (err) {}
+    memoryDrafts.delete(id); return;
+  }
+  await queueTransaction('readwrite', store => store.delete(id), DRAFT_STORE);
+  memoryDrafts.delete(id);
+}
+async function refreshDrafts() {
+  const renderId = ++draftRenderId, drafts = await readDrafts();
+  if (renderId !== draftRenderId) return;
+  draftCount = drafts.length;
+  draftURLs.forEach(url => URL.revokeObjectURL(url)); draftURLs = [];
+  const list = $('draftList'); list.replaceChildren();
+  $('draftCount').textContent = drafts.length;
+  $('draftEmpty').hidden = !!drafts.length; $('btnClearDrafts').hidden = !drafts.length;
+  $('draftStatus').textContent = memoryDrafts.size
+    ? 'Stockage indisponible : gardez cet onglet ouvert et enregistrez une copie de vos souvenirs.'
+    : drafts.length ? formatBytes(drafts.reduce((sum, item) => sum + (item.storageSize || item.size), 0)) + ' · Touchez un souvenir pour le voir ou ajouter un filtre.' : '';
+  for (const [index, item] of drafts.entries()) {
+    const row = document.createElement('li'); row.className = 'draft-tile';
+    const open = document.createElement('button'); open.className = 'draft-tile__open'; open.type = 'button';
+    open.setAttribute('aria-label', `Voir ${item.mediaType === 'photo' ? 'la photo' : 'la vidéo'} ${index + 1}`);
+    const url = URL.createObjectURL(new Blob([item.bytes], { type: item.mimeType })); draftURLs.push(url);
+    const media = document.createElement(item.mediaType === 'photo' ? 'img' : 'video');
+    media.src = url; media.alt = ''; media.muted = true; media.playsInline = true; media.preload = 'metadata';
+    if (item.mediaType === 'video') media.setAttribute('aria-hidden', 'true');
+    open.appendChild(media);
+    open.addEventListener('click', () => {
+      if (state.isBusy || selectionBusy) return;
+      resetMedia(); setCapturedMedia(new Blob([item.originalBytes || item.bytes], { type: item.originalMimeType || item.mimeType }), item.mediaType, item.width, item.height, item.duration);
+      state.editingDraftId = item.uploadId; state.message = item.message || ''; goToPreview(item.originalBytes ? item.filterId : 'none');
+    }); row.appendChild(open);
+    if (item.mediaType === 'video') { const duration = document.createElement('span'); duration.className = 'draft-tile__duration'; duration.textContent = '▶ ' + Math.round(item.duration) + ' s'; row.appendChild(duration); }
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'draft-tile__remove'; remove.textContent = '×';
+    remove.setAttribute('aria-label', `Retirer le souvenir ${index + 1}`);
+    remove.addEventListener('click', async () => {
+      if (state.isBusy || selectionBusy) return;
+      selectionBusy = true; setHomeBusy(true);
+      try { await removeDraft(item.uploadId); await refreshDrafts(); announce('Souvenir retiré de la sélection.'); }
+      catch (err) { toast('Le souvenir n’a pas pu être retiré. Réessayez.'); }
+      finally { selectionBusy = false; setHomeBusy(false); }
+    }); row.appendChild(remove); list.appendChild(row);
+  }
+  setHomeBusy(state.isBusy || selectionBusy);
+}
+$('btnClearDrafts').addEventListener('click', async () => {
+  if (state.isBusy || selectionBusy) return;
+  if (!window.confirm('Retirer tous les souvenirs de votre sélection ? Les envois déjà en attente seront conservés.')) return;
+  selectionBusy = true; setHomeBusy(true);
+  try {
+    const drafts = await readDrafts();
+    if (drafts.some(item => !memoryDrafts.has(item.uploadId))) await queueTransaction('readwrite', store => store.clear(), DRAFT_STORE);
+    memoryDrafts.clear(); await refreshDrafts();
+  }
+  catch (err) { toast('La sélection n’a pas pu être effacée. Réessayez.'); }
+  finally { selectionBusy = false; setHomeBusy(false); }
+});
+async function submitDrafts(ids, guestName, message) {
+  const nextAttemptAt = Date.now() + 500 + Math.random() * 12000;
+  const prepare = draft => {
+    const { originalBytes, originalMimeType, storageSize, ...media } = draft;
+    return { ...media, guestName, message: draft.message || message, status: 'PENDING', attempts: 0, nextAttemptAt };
+  };
+  const submitted = [], wanted = new Set(ids);
+  const persistent = (await readDrafts()).filter(item => !memoryDrafts.has(item.uploadId) && wanted.has(item.uploadId));
+  if (persistent.length) {
+    const db = await openQueueDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction([DRAFT_STORE, DB_STORE], 'readwrite');
+      const req = tx.objectStore(DRAFT_STORE).getAll();
+      req.onsuccess = () => {
+        for (const draft of req.result.filter(item => wanted.has(item.uploadId))) {
+          const item = prepare(draft); tx.objectStore(DB_STORE).put(item); tx.objectStore(DRAFT_STORE).delete(item.uploadId); submitted.push(item);
+        }
+      };
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = tx.onabort = () => { db.close(); reject(tx.error || new Error('Envoi non préparé. Votre sélection est conservée.')); };
+    });
+  }
+  for (const [id, draft] of memoryDrafts) {
+    if (!wanted.has(id)) continue;
+    const item = prepare(draft);
+    try { await queuePut(item); } catch (err) { memoryQueue.set(id, item); }
+    memoryDrafts.delete(id); submitted.push(item);
+  }
+  return submitted;
+}
+$('btnSendSelection').addEventListener('click', async () => {
+  if (state.isBusy || selectionBusy) return;
+  selectionBusy = true; setHomeBusy(true);
+  try {
+    state.guestName = el.nameInput.value.trim(); rememberGuestName(state.guestName);
+    const drafts = await readDrafts();
+    const items = await submitDrafts(drafts.map(item => item.uploadId), state.guestName, $('batchCaption').value.trim());
+    if (!items.length) { await refreshDrafts(); toast('Votre sélection est vide ou a déjà été envoyée depuis un autre onglet.'); return; }
+    state.doneBatchIds = items.map(item => item.uploadId); state.doneUploadId = null;
+    resetMedia(); $('batchCaption').value = ''; showScreen('done');
+    setDoneStatus('pending', 'Votre sélection est conservée sur cet appareil. Gardez cette page ouverte jusqu’à la réception.');
+    await refreshDrafts(); await refreshPending(); scheduleQueue(500);
+  } catch (err) { toast(err.message || 'Votre sélection est conservée. Réessayez.'); }
+  finally { selectionBusy = false; setHomeBusy(false); }
+});
+window.addEventListener('storage', () => { if (!state.isBusy && !selectionBusy) refreshDrafts(); });
 
 
 /* ───────────────────────── ACCUEIL & CYCLE DE VIE ───────────────────────── */
@@ -2572,21 +2751,26 @@ function recallGuestName() {
 }
 
 $('btnHomeGallery').addEventListener('click', () => {
+  if (selectionBusy) return;
   state.guestName = el.nameInput.value.trim(); rememberGuestName(state.guestName); openGallery();
 });
 $('btnBlockerBack').addEventListener('click', () => { stopAllStreams(); showScreen('home'); });
-$('nameInput').addEventListener('keydown', event => { if (event.key === 'Enter') el.btnStart.click(); });
-el.btnStart.addEventListener('click', async () => {
-  if (state.isBusy) return;
+$('nameInput').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); $('batchCaption').focus(); } });
+async function beginCapture(mode) {
+  if (state.isBusy || selectionBusy) return;
+  resetMedia();
   state.guestName = el.nameInput.value.trim();
   rememberGuestName(state.guestName);
   showScreen('capture');
-  setCaptureMode('photo');
+  setCaptureMode(mode);
   await startCamera();
-});
+  if (mode === 'video' && el.screenCapture.classList.contains('is-active')) { ensureAudioStream(); startCanvasPipeline(); }
+}
+el.btnStart.addEventListener('click', () => beginCapture('photo'));
+$('btnHomeVideo').addEventListener('click', () => beginCapture('video'));
 
 el.btnCaptureBack.addEventListener('click', () => {
-  state.importSession++; state.isBusy = false; el.btnStart.disabled = false; $('btnHomeGallery').disabled = false;
+  state.importSession++; state.isBusy = false; setHomeBusy(false);
   state.discardRecording = true;
   if (state.isRecording) stopRecording();
   stopAllStreams();
@@ -2616,6 +2800,7 @@ function resetMedia() {
   el.filterOverlay.hidden = true;
   el.filterOverlay.getContext('2d')
     .clearRect(0, 0, el.filterOverlay.width, el.filterOverlay.height);
+  state.editingDraftId = null;
   state.message = '';
   el.captionInput.value = '';
   state.mediaBlob = null;
@@ -2634,6 +2819,7 @@ document.addEventListener('visibilitychange', () => {
     } else if (el.screenCapture.classList.contains('is-active')) stopAllStreams();
   } else {
     if (el.screenCapture.classList.contains('is-active') && !state.videoStream) startCamera();
+    refreshDrafts();
     processQueue('retour sur la page');
   }
 });
@@ -2669,6 +2855,7 @@ window.addEventListener('unhandledrejection', (e) => console.error('[promise]', 
 
   setCaptureMode('photo');
   showScreen('home');
+  refreshDrafts();
   refreshPending().then(() => scheduleQueue(1500 + Math.random() * 4000));
   await loadFilters();
   if (el.screenPreview.classList.contains('is-active') && !state.isBusy) {

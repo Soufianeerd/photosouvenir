@@ -633,3 +633,57 @@ body.is-scrollable { overflow: auto; }
 .preview-controls button { min-height: 36px; border: 1px solid #fff5; border-radius: 8px; background: #202020; color: white; padding: 5px 8px; font: 500 11px var(--font-sans); }
 #screenPreview .stage__top { gap: 5px; }
 #screenPreview .filter-name { flex-shrink: 1; max-width: 42%; }
+
+/* Accueil et sélection : papeterie crème, bordeaux et coins doux. */
+#screenHome { background: #f6f0e5; }
+.home--collection { max-width: 500px; padding: calc(var(--safe-t) + 28px) max(22px, var(--safe-r)) calc(var(--safe-b) + 28px) max(22px, var(--safe-l)); min-height: var(--vh); color: #292521; }
+.wedding-header { text-align: center; }
+.wedding-header__names { font-family: 'Great Vibes', cursive; font-size: clamp(35px, 9vw, 43px); line-height: 1.35; color: #812331; }
+.wedding-header__names span { margin: 0 2px; }
+.wedding-header__date { margin-top: 4px; font-size: 11px; font-weight: 500; letter-spacing: .25em; color: #796b5d; }
+.home-heading { text-align: center; margin: 29px 0 28px; }
+.home-heading h1 { color: #812331; font: 500 clamp(34px, 9.2vw, 42px)/1.16 var(--font-serif); letter-spacing: -.02em; }
+.home-heading p { margin-top: 17px; color: #746758; font: 400 13px/1.8 var(--font-sans); }
+.home-actions { display: grid; gap: 11px; }
+.source-card { width: 100%; display: flex; align-items: center; gap: 13px; min-height: 82px; padding: 16px; border: 1px solid #e7dac8; border-radius: 16px; background: #fff; text-align: left; color: #292521; font-family: var(--font-sans); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.source-card__icon { width: 46px; height: 46px; flex: 0 0 46px; border-radius: 14px; display: grid; place-items: center; background: #fbf6ed; border: 1px solid #efe0c9; color: #a47a40; }
+.source-card svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+.source-card__copy { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.source-card strong { font-size: 15px; font-weight: 500; line-height: 1.4; }
+.source-card small { color: #81786c; font-size: 11px; line-height: 1.5; }
+.source-card__arrow { font: 300 26px/1 var(--font-serif); margin-left: auto; color: #a69b8e; }
+.source-card--primary { background: #812331; color: #fffaf2; border-color: #812331; }
+.source-card--primary .source-card__icon { color: #fff5e8; background: #ffffff24; border-color: transparent; }
+.source-card--primary small, .source-card--primary .source-card__arrow { color: #f0cdd1; }
+.source-card:active { transform: translateY(1px); }
+.source-card:disabled { opacity: .6; cursor: wait; }
+.selection { margin-top: 27px; }
+.selection__heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.selection__heading h2 { color: #786957; font-size: 10px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; }
+.selection__heading > button { background: transparent; border: 0; color: #812331; padding: 8px 0 8px 8px; min-height: 36px; font: 500 11px var(--font-sans); cursor: pointer; }
+.selection__empty { border: 1px dashed #dfcfba; border-radius: 14px; padding: 19px 12px; text-align: center; color: #7b6d5c; font-size: 11px; line-height: 1.8; }
+.selection__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; list-style: none; }
+.draft-tile { position: relative; min-width: 0; }
+.draft-tile__open { width: 100%; aspect-ratio: 1; border-radius: 13px; border: 1px solid #e7d7c0; background: #efe5d7; overflow: hidden; cursor: pointer; display: block; }
+.draft-tile img, .draft-tile video { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.draft-tile__remove { position: absolute; top: -5px; right: -5px; width: 36px; height: 36px; border: 4px solid #f6f0e5; border-radius: 50%; color: #fff; background: #68534e; cursor: pointer; font-size: 18px; line-height: 1; }
+.draft-tile__duration { position: absolute; bottom: 6px; left: 6px; background: #3d302ac9; color: white; font: 500 9px/1.4 var(--font-sans); padding: 2px 4px; border-radius: 4px; pointer-events: none; }
+.selection__status { color: #786957; font-size: 10px; line-height: 1.6; margin: 9px 0 0; }
+.selection__status:empty { display: none; }
+.collection-form { display: grid; gap: 10px; margin-top: 20px; }
+.collection-input { display: flex; align-items: center; background: #fff; border: 1px solid #e7dac8; border-radius: 12px; padding-left: 14px; }
+.collection-input__icon svg, .collection-privacy svg, .collection-send svg { width: 19px; height: 19px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.collection-input input { width: 100%; min-width: 0; border: none; border-radius: 12px; padding: 16px 10px; background: transparent; color: #292521; font: 400 16px var(--font-sans); }
+.collection-form textarea { resize: vertical; min-height: 67px; max-height: 180px; padding: 14px; background: white; border: 1px solid #e7dac8; border-radius: 12px; color: #292521; font: 400 16px/1.5 var(--font-sans); }
+.collection-form input::placeholder, .collection-form textarea::placeholder { color: #7e7469; font-size: 12px; opacity: 1; }
+.collection-send { background: #812331; color: #fff8ef; border-radius: 13px; min-height: 57px; font-size: 11px; letter-spacing: .12em; display: flex; align-items: center; justify-content: center; gap: 11px; margin: 0; }
+.collection-send:disabled { opacity: .5; }
+.collection-privacy { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 15px; color: #786957; font-size: 10px; line-height: 1.6; text-align: center; }
+.collection-privacy svg { width: 15px; height: 15px; }
+.home-help { font-size: 10px; line-height: 1.8; color: #786957; margin-top: 17px; }
+.home-help summary { cursor: pointer; text-align: center; padding: 6px; }
+.home-help p { padding: 10px 0; }
+@media (min-width: 700px) { .home--collection { padding-top: 40px; padding-bottom: 40px; } }
+@media (max-width: 350px) { .home--collection { padding-left: 16px; padding-right: 16px; } .source-card { padding: 12px; gap: 10px; } .source-card strong { font-size: 12px; } .source-card small { font-size: 9px; } }
+/* Le focus de navigation est annoncé sans encadrer les titres statiques. */
+h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }

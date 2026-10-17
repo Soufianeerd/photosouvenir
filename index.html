@@ -19,7 +19,7 @@
        avant le premier rendu (voir FilterRender.ensureFonts). -->
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Great+Vibes&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="css/style.css?v=20261017-2" />
+  <link rel="stylesheet" href="css/style.css?v=20261017-3" />
   <link rel="preload" as="fetch" href="filters/filters.json" crossorigin="anonymous" />
 
   <link rel="manifest" href="manifest.webmanifest" />
@@ -38,39 +38,52 @@
      ÉCRAN 1 — ACCUEIL
      ══════════════════════════════════════════════════ -->
 <main class="screen screen--home is-active" id="screenHome">
-  <div class="home">
-    <header class="home__header">
-      <span class="home__ornament" aria-hidden="true">✦&nbsp;&nbsp;Mariage&nbsp;&nbsp;✦</span>
-      <h1 class="home__title">Livre de<br /><em>Souvenirs</em></h1>
-      <p class="home__sub">Salma &amp; Soufiane · 23 octobre 2026</p>
+  <div class="home home--collection">
+    <header class="wedding-header">
+      <p class="wedding-header__names">Soufiane <span>&amp;</span> Salma</p>
+      <p class="wedding-header__date"><time datetime="2026-10-23" aria-label="23 octobre 2026">23 · 10 · 2026</time></p>
     </header>
-
-    <p class="home__intro">
-      Laissez-nous une photo ou une petite vidéo.
-      Elle rejoindra notre album privé.
-    </p>
-
-    <div class="field">
-      <label class="field__label" for="nameInput">Votre prénom <span class="field__opt">(facultatif)</span></label>
-      <input class="field__input" type="text" id="nameInput" placeholder="Ex : Sophie" maxlength="50" autocomplete="given-name" enterkeyhint="go" />
+    <div class="home-heading">
+      <h1>Partagez<br />votre souvenir</h1>
+      <p>Vos photos et vidéos rejoignent<br class="wide-only" /> l’album privé des mariés.</p>
     </div>
-
-    <button class="btn btn--primary" id="btnStart" type="button">
-      <span class="btn__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5 10 3h4l2 2h4v15H4V5z"/><circle cx="12" cy="12" r="4"/></svg></span> Créer mon souvenir
-    </button>
-
-    <button class="btn btn--ghost" id="btnHomeGallery" type="button">Choisir dans ma galerie</button>
-
-    <p class="home__privacy">
-      La caméra sert à prendre votre photo. Le micro est demandé uniquement en mode vidéo.
-      Vous pouvez l'enregistrer sur votre téléphone sans l'envoyer.
-      Rien n'est publié automatiquement&nbsp;: les souvenirs envoyés restent privés,
-      conservés par les mariés.
-    </p>
-
-    <footer class="home__footer">
-      <p>Salma &amp; Soufiane · 23.10.2026</p>
-    </footer>
+    <div class="home-actions" aria-label="Créer un souvenir">
+      <button class="source-card source-card--primary" id="btnStart" type="button">
+        <span class="source-card__icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 2-2h4l2 2h4v15H4V5z"/><circle cx="12" cy="12" r="4"/></svg></span>
+        <span class="source-card__copy"><strong>Prendre une photo</strong><small>Appareil photo</small></span>
+        <span class="source-card__arrow" aria-hidden="true">›</span>
+      </button>
+      <button class="source-card" id="btnHomeVideo" type="button">
+        <span class="source-card__icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="12" height="14" rx="3"/><path d="m15 9 6-4v14l-6-4z"/></svg></span>
+        <span class="source-card__copy"><strong>Filmer une vidéo</strong><small>60 secondes maximum</small></span>
+        <span class="source-card__arrow" aria-hidden="true">›</span>
+      </button>
+      <button class="source-card" id="btnHomeGallery" type="button">
+        <span class="source-card__icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m3 17 6-6 4 4 3-3 5 5"/><circle cx="16" cy="8" r="1"/></svg></span>
+        <span class="source-card__copy"><strong>Choisir depuis la galerie</strong><small>Jusqu’à 20 souvenirs dans votre sélection</small></span>
+        <span class="source-card__arrow" aria-hidden="true">›</span>
+      </button>
+    </div>
+    <section class="selection" aria-labelledby="selectionHeading">
+      <div class="selection__heading">
+        <h2 id="selectionHeading">Prêts à envoyer · <span id="draftCount">0</span></h2>
+        <button id="btnClearDrafts" type="button" hidden>Tout effacer</button>
+      </div>
+      <p class="selection__empty" id="draftEmpty">Vos souvenirs apparaîtront ici.<br />Rien n’est envoyé sans votre accord.</p>
+      <ul class="selection__grid" id="draftList" aria-label="Souvenirs sélectionnés"></ul>
+      <p class="selection__status" id="draftStatus" role="status" aria-live="polite"></p>
+    </section>
+    <div class="collection-form">
+      <label class="collection-input" for="nameInput">
+        <span class="collection-input__icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg></span><span class="sr-only">Votre prénom et nom (facultatif)</span>
+        <input type="text" id="nameInput" placeholder="Votre prénom et nom (facultatif)" maxlength="50" autocomplete="name" enterkeyhint="next" />
+      </label>
+      <label class="sr-only" for="batchCaption">Une légende commune (facultatif)</label>
+      <textarea id="batchCaption" rows="2" maxlength="200" placeholder="Une légende pour vos souvenirs ? (facultatif)"></textarea>
+      <button class="btn collection-send" id="btnSendSelection" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V3m-5 5 5-5 5 5M4 14v6h16v-6"/></svg><span>Envoyer aux mariés</span></button>
+    </div>
+    <p class="collection-privacy"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4"/></svg><span>Album privé · visible uniquement par les mariés</span></p>
+    <details class="home-help"><summary>Quelques infos avant de commencer</summary><p>Le micro est demandé uniquement pour filmer. Vous pouvez garder une copie sur votre téléphone. Jusqu’à 20 souvenirs et 32 Mo sur cet appareil, en comptant les envois en attente. Les photos sont allégées pour faciliter l’envoi. Gardez cette page ouverte jusqu’à la confirmation de réception.</p></details>
   </div>
 </main>
 
@@ -137,7 +150,7 @@
     <p class="stage__hint" id="captureHint">Touchez pour une photo · Maintenez pour une vidéo</p>
   </div>
 
-  <input type="file" accept="image/*,video/*" id="galleryInput" class="sr-only" />
+  <input type="file" accept="image/*,video/*" id="galleryInput" class="sr-only" multiple />
 
   <!-- Écran d'erreur caméra -->
   <div class="stage__blocker" id="cameraBlocker" hidden>
@@ -176,7 +189,7 @@
   <div class="stage__scrim stage__scrim--bottom stage__scrim--tall" aria-hidden="true"></div>
 
   <div class="stage__top">
-    <button class="iconbtn" id="btnRetake" type="button" aria-label="Recommencer la prise de vue">
+    <button class="iconbtn" id="btnRetake" type="button" aria-label="Revenir à ma sélection">
       <span aria-hidden="true">←</span>
     </button>
     <span class="filter-name" id="filterName">Aucun filtre</span>
@@ -203,7 +216,7 @@
         <span class="btn__icon" aria-hidden="true">⬇︎</span><span id="saveShareLabel"> Enregistrer dans mes photos</span>
       </button>
       <button class="btn btn--primary btn--half" id="btnSend" type="button">
-        <span class="btn__icon" aria-hidden="true">✉︎</span> Envoyer aux mariés
+        <span class="btn__icon" aria-hidden="true">＋</span><span id="previewSelectionLabel">Ajouter à ma sélection</span>
       </button>
     </div>
   </div>
@@ -230,7 +243,7 @@
     <span class="done__ornament" aria-hidden="true">✦</span>
     <h2 class="done__title" id="doneTitle">Votre souvenir se prépare à partir</h2>
     <div class="done__rule" aria-hidden="true"><i></i><span>✦</span><i></i></div>
-    <p class="done__text" id="doneText">
+    <p class="done__text" id="doneText" role="status" aria-live="polite">
       Merci&nbsp;! Votre souvenir rejoint l'album de Salma &amp; Soufiane.
     </p>
 
@@ -255,8 +268,8 @@
   </details>
 </aside>
 
-<script src="js/filter-render.js?v=20261017-2" defer></script>
-<script src="js/app.js?v=20261017-2" defer></script>
+<script src="js/filter-render.js?v=20261017-3" defer></script>
+<script src="js/app.js?v=20261017-3" defer></script>
 
 <script>
   /* Cache hors ligne : un invité qui crée plusieurs souvenirs dans la soirée
