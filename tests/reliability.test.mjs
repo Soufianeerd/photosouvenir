@@ -114,3 +114,28 @@ test('a server RETRY status allows a later POST rather than blocking it forever'
   assert.equal((await f.run("attemptSend({uploadId:'retry',bytes:new Uint8Array([1]),mimeType:'image/jpeg',attempts:1})")).status,'COMPLETED');
   assert.equal(f.run('posts'),1);
 });
+
+test('late filter initialization does not navigate away from an active capture', async () => {
+  const fs = await import('node:fs');
+  const f = frontend(); f.run("var releaseFilters;loadFilters=()=>new Promise(r=>releaseFilters=r)");
+  const source = fs.readFileSync('js/app.js','utf8');
+  const init = f.run(source.slice(source.indexOf('(async function init() {')));
+  f.run("showScreen('capture');releaseFilters()"); await init;
+  assert.equal(f.run("el.screenCapture.classList.contains('is-active')"),true);
+});
+test('leaving capture cancels an image import before it can reopen preview', async () => {
+  const f = frontend(); f.run("showScreen('capture');var releaseImage;loadImage=()=>new Promise(r=>releaseImage=r);canvasToBlob=async()=>new Blob(['jpeg'],{type:'image/jpeg'})");
+  f.elements.get('galleryInput').files=[new File(['image'],'test.png',{type:'image/png'})];
+  const loading=f.elements.get('galleryInput').listeners.change[0]();
+  f.elements.get('btnCaptureBack').listeners.click[0]();
+  f.run('releaseImage({naturalWidth:1200,naturalHeight:800})'); await loading;
+  assert.equal(f.run("el.screenHome.classList.contains('is-active')"),true);
+  assert.equal(f.run('state.mediaBlob'),null);
+});
+
+
+test('double-tap cannot switch the raw camera while canvas recording is unavailable', async () => {
+  const f=frontend();f.context.original=stream();f.run("state.videoStream=original;state.isRecording=true;state.canvasPipelineActive=false");
+  let requests=0;f.context.navigator.mediaDevices.getUserMedia=async()=>{requests++;return stream('environment')};
+  await f.run('switchCamera()');assert.equal(requests,0);assert.equal(f.run('state.facingMode'),'user');
+});

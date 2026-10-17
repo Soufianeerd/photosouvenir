@@ -76,7 +76,7 @@ const BACKEND_PHOTO_MIME_ALLOWLIST = ['image/jpeg', 'image/png', 'image/webp'];
 
 const state = {
   guestName: '',
-  mediaId: 0, cameraSession: 0, audioGeneration: 0, cameraChanging: false,
+  mediaId: 0, importSession: 0, cameraSession: 0, audioGeneration: 0, cameraChanging: false,
   cameraReady: false, recordStarting: false, recordStopping: false, recordRequestId: 0,
   discardRecording: false, recordDimensions: null, screenFlashOn: false,
   doneUploadId: null,
@@ -394,15 +394,17 @@ function showScreen(name) {
 
 async function loadFilters() {
   let raw = [{ id: 'none', name: 'Aucun filtre', order: 0, active: true }];
+  const controller = new AbortController();
+  const filterTimeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const res = await fetch(CONFIG.FILTERS_URL, { cache: 'no-cache' });
+    const res = await fetch(CONFIG.FILTERS_URL, { cache: 'no-cache', signal: controller.signal });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (Array.isArray(data.filters) && data.filters.length) raw = data.filters;
   } catch (err) {
     console.error('[filters] Chargement impossible :', err);
     toast("Les filtres n'ont pas pu être chargés. Vous pouvez continuer sans filtre.");
-  }
+  } finally { clearTimeout(filterTimeout); }
 
   const now = Date.now();
 
@@ -796,7 +798,7 @@ function ensureAudioStream() {
 }
 
 async function switchCamera() {
-  if (state.cameraChanging || state.isBusy || state.recordStarting || !state.videoStream) return;
+  if (state.cameraChanging || state.isBusy || state.recordStarting || !state.videoStream || (state.isRecording && !state.canvasPipelineActive)) return;
   state.cameraChanging = true;
   const session = state.cameraSession;
   const previous = state.facingMode;
@@ -1175,6 +1177,7 @@ async function grabPhotoSource() {
       if (blob && blob.size > 0) {
         const bitmap = await createImageBitmap(blob);
         if (bitmap.width >= (el.cameraFeed.videoWidth || 0)) return bitmap;
+        bitmap.close();
       }
     } catch (err) {
       console.info('[photo] ImageCapture indisponible, repli sur le canvas :', err && err.name);
@@ -1478,12 +1481,21 @@ el.galleryInput.addEventListener('change', async () => {
   const isVideo = file.type.indexOf('video/') === 0;
   const isPhoto = file.type.indexOf('image/') === 0;
   if (!isVideo && !isPhoto) { toast('Format de fichier non pris en charge.'); return; }
-
+  if (state.isBusy) return;
+  if (file.size > (isVideo ? CONFIG.CLIENT_MAX_VIDEO_BYTES : 32 * 1024 * 1024)) {
+    toast('Ce fichier est trop volumineux. Choisissez un fichier plus léger ou une vidéo plus courte.'); return;
+  }
+  const importId = ++state.importSession;
+  const fromCapture = el.screenCapture.classList.contains('is-active');
+  stopAllStreams();
+  state.isBusy = true;
+  el.btnStart.disabled = true; $('btnHomeGallery').disabled = true;
+  let imported = false;
+  let imageURL = null;
   try {
     if (isPhoto) {
-      const url = URL.createObjectURL(file);
-      const img = await loadImage(url);
-      URL.revokeObjectURL(url);
+      imageURL = URL.createObjectURL(file);
+      const img = await loadImage(imageURL);
 
       let w = img.naturalWidth, h = img.naturalHeight;
       const longEdge = Math.max(w, h);
@@ -1497,6 +1509,7 @@ el.galleryInput.addEventListener('change', async () => {
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, 0, 0, w, h);
       const blob = await canvasToBlob(canvas, 'image/jpeg', CONFIG.JPEG_QUALITY);
+      if (importId !== state.importSession) return;
       setCapturedMedia(blob, 'photo', w, h, 0);
     } else {
       const meta = await readVideoMetadata(file);
@@ -1508,12 +1521,20 @@ el.galleryInput.addEventListener('change', async () => {
         toast("Ce format vidéo n'est pas accepté. Formats acceptés : MP4, WebM, MOV.");
         return;
       }
+      if (importId !== state.importSession) return;
       setCapturedMedia(file, 'video', meta.width, meta.height, meta.duration || 1);
     }
+    imported = true;
     goToPreview();
   } catch (err) {
     console.error('[galerie]', err);
-    toast(isVideo && err.message ? err.message : 'Cette image ne peut pas être lue. Choisissez une photo JPEG ou PNG.');
+    if (importId === state.importSession) toast(isVideo && err.message ? err.message : 'Cette image ne peut pas être lue. Choisissez une photo JPEG ou PNG.');
+  } finally {
+    if (imageURL) URL.revokeObjectURL(imageURL);
+    if (importId === state.importSession) {
+      state.isBusy = false; el.btnStart.disabled = false; $('btnHomeGallery').disabled = false;
+      if (!imported && fromCapture && el.screenCapture.classList.contains('is-active')) startCamera();
+    }
   }
 });
 
@@ -1828,8 +1849,9 @@ async function burnFilterIntoVideo(blob, filter, onProgress) {
 
     const srcW = videoEl.videoWidth || state.mediaWidth || 720;
     const srcH = videoEl.videoHeight || state.mediaHeight || 1280;
-    const w = Math.round(srcW / 2) * 2;
-    const h = Math.round(srcH / 2) * 2;
+    const scale = Math.min(1, CONFIG.RECORD_SHORT_EDGE / Math.min(srcW, srcH), CONFIG.RECORD_MAX_LONG_EDGE / Math.max(srcW, srcH));
+    const w = Math.max(2, Math.round(srcW * scale / 2) * 2);
+    const h = Math.max(2, Math.round(srcH * scale / 2) * 2);
 
     /* Cadre composé une seule fois, au format exact de la vidéo : il est
        ensuite réutilisé tel quel sur chaque image, sans aucun recadrage. */
@@ -2512,7 +2534,7 @@ el.btnSend.addEventListener('click', async () => {
       guestName: state.guestName, message: state.message, filterId: filter.id,
       orientation: state.mediaHeight >= state.mediaWidth ? 'portrait' : 'landscape',
       filename: buildFileName(mime), filterBurned, createdAt: Date.now(), attempts: 0,
-      status: 'PENDING', nextAttemptAt: Date.now() + 500 + Math.random() * 4500
+      status: 'PENDING', nextAttemptAt: Date.now() + 500 + Math.random() * 12000
     };
     try { await queuePut(item); }
     catch (err) { memoryQueue.set(item.uploadId, item); }
@@ -2555,6 +2577,7 @@ $('btnHomeGallery').addEventListener('click', () => {
 $('btnBlockerBack').addEventListener('click', () => { stopAllStreams(); showScreen('home'); });
 $('nameInput').addEventListener('keydown', event => { if (event.key === 'Enter') el.btnStart.click(); });
 el.btnStart.addEventListener('click', async () => {
+  if (state.isBusy) return;
   state.guestName = el.nameInput.value.trim();
   rememberGuestName(state.guestName);
   showScreen('capture');
@@ -2563,6 +2586,7 @@ el.btnStart.addEventListener('click', async () => {
 });
 
 el.btnCaptureBack.addEventListener('click', () => {
+  state.importSession++; state.isBusy = false; el.btnStart.disabled = false; $('btnHomeGallery').disabled = false;
   state.discardRecording = true;
   if (state.isRecording) stopRecording();
   stopAllStreams();
@@ -2643,11 +2667,13 @@ window.addEventListener('unhandledrejection', (e) => console.error('[promise]', 
   const knownName = recallGuestName();
   if (knownName && !el.nameInput.value) el.nameInput.value = knownName;
 
-  await loadFilters();
   setCaptureMode('photo');
   showScreen('home');
+  refreshPending().then(() => scheduleQueue(1500 + Math.random() * 4000));
+  await loadFilters();
+  if (el.screenPreview.classList.contains('is-active') && !state.isBusy) {
+    buildFilterStrip(); selectFilter(0, false);
+  }
   console.info('[app] prêt · filtres chargés :', state.filters.length);
 
-  /* Souvenirs restés en file lors d'une précédente visite. */
-  refreshPending().then(() => scheduleQueue(1500 + Math.random() * 4000));
 })();
