@@ -1,11 +1,11 @@
 'use strict';
 // Atomic shell release. Capture/upload data lives in IndexedDB, never in caches.
-const VERSION = 'livre-souvenirs-20261017-2';
+const VERSION = 'livre-souvenirs-20261017-3';
 const SHELL_CACHE = VERSION + '-shell';
 const FILTER_CACHE = VERSION + '-filters';
 const SHELL = [
-  '/', '/index.html', '/css/style.css?v=20261017-2',
-  '/js/filter-render.js?v=20261017-2', '/js/app.js?v=20261017-2',
+  '/', '/index.html', '/css/style.css?v=20261017-3',
+  '/js/filter-render.js?v=20261017-3', '/js/app.js?v=20261017-3',
   '/filters/filters.json', '/manifest.webmanifest', '/icon.svg'
 ];
 self.addEventListener('install', event => {

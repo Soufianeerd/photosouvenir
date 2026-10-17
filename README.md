@@ -18,6 +18,14 @@ Le laboratoire `http://127.0.0.1:8776/__lab` utilise des caméras, un son à 440
 
 `npm test` vérifie notamment la conservation de 160 souvenirs avec refus temporaire puis reprise, le verrou multi-onglets, l’idempotence, les métadonnées, les ouvertures tardives et les erreurs de bascule. Cette simulation ne mesure pas la capacité de la connexion Wi-Fi de la salle ni les quotas réels de Google.
 
+## Accueil et sélection
+
+L’accueil « Soufiane & Salma · 23 octobre 2026 » propose photo, vidéo directe et import multiple. Un fichier unique ouvre l’aperçu ; plusieurs fichiers sont préparés un par un et ajoutés à la sélection. Touchez une vignette pour modifier son filtre et sa légende. Le bouton d’aperçu **Ajouter à ma sélection** ne déclenche aucun envoi.
+
+La sélection (20 souvenirs maximum) est persistée dans le magasin IndexedDB `selection`, séparé de la file d’envoi. Les photos sont allégées ; une vidéo importée doit être lisible, durer au maximum 60 secondes et respecter la taille acceptée. Les erreurs d’un fichier ne suppriment pas les autres. Le budget total de 32 Mio inclut sélection, originaux nécessaires pour modifier les filtres et envois en attente.
+
+Le bouton de l’accueil **Envoyer aux mariés** déplace les éléments dans la file d’envoi au sein d’une transaction atomique. Les identifiants sont conservés, y compris si deux onglets envoient la même sélection. Le nom et la légende commune sont appliqués à tout le lot ; une légende individuelle prend priorité. Le compteur de réception attend la confirmation de chaque souvenir. Un retrait de sélection ne supprime jamais un envoi en attente.
+
 ## Publication
 
 Netlify exécute `node tools/build.mjs` et publie **dist**, préparé à partir d’une liste explicite. Le code Apps Script, les tests et les documents ne doivent pas être servis publiquement. Ne pas renommer le projet Netlify ni changer le domaine.
@@ -68,7 +76,7 @@ Pour de nouveaux filtres : vérifier les zones de visage, la transparence, le po
 
 Les tests automatisés et le navigateur de bureau ne remplacent pas une recette matérielle. Vérifier au minimum un iPhone/Safari et un Android/Chrome, idéalement anciens et récents :
 
-1. Scanner un QR déjà imprimé.
+1. Scanner un QR déjà imprimé. Vérifier les trois accès de l’accueil, l’import multiple, le retrait d’une vignette, la modification d’un filtre et la conservation de la sélection après rechargement.
 2. Refuser puis autoriser la caméra ; importer une photo et une vidéo sans autoriser la caméra.
 3. Photographier avec chaque caméra ; tester lampe arrière et éclairage écran en faible lumière.
 4. Filmer avec son, basculer, arrêter, verrouiller l’écran et reprendre ; contrôler le fichier reçu.
